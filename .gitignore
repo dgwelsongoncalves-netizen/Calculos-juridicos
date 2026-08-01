@@ -1,0 +1,21 @@
+# Ignorar ambientes virtuais e dependências
+venv/
+__pycache__/
+*.pyc
+
+# Ignorar planilhas temporárias de sistema (arquivos abertos)
+~$*.xlsx
+.lock.*
+
+# Proteger Dados de Clientes: Ignorar o conteúdo das pastas de processos
+Processos_Arquivados/*
+Processos_Calculados/*
+Processos_Entrada/*
+
+# Exceção: Manter SEMPRE o template vazio na pasta de entrada
+!Processos_Entrada/template_nash.xlsx
+!Processos_Entrada/
+
+# Exceção: Manter arquivos de documentação nas pastas para não subirem vazias
+!Processos_Arquivados/.gitkeep
+!Processos_Calculados/.gitkeep
