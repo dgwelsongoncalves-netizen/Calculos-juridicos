@@ -38,7 +38,7 @@ def carregar_tjmg():
         ultima_data = df['DATA_REF'].max()
         hoje = pd.Timestamp.today()
         diferenca_meses = (hoje.year - ultima_data.year) * 12 + (hoje.month - ultima_data.month)
-        if diferenca_meses >= 2:
+        if diferenca_meses >= 3:
             raise ValueError(f"ATENÇÃO: A tabela do TJMG está desatualizada (último mês: {ultima_data.strftime('%m/%Y')}).\n\nBaixe a versão mais recente no site do Tribunal e substitua o arquivo na pasta 'Tabelas_Oficiais'.")
             
         return df[['DATA_REF', 'ÍNDICE']].set_index('DATA_REF')
