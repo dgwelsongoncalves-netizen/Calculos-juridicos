@@ -3,11 +3,11 @@ name: Gerar Executavel Windows
 on:
   push:
     branches: [ "main", "master" ]
-  workflow_dispatch: # Permite apertar um botão para fabricar manualmente
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest # Usa um servidor Windows da Microsoft
+    runs-on: windows-latest
 
     steps:
     - name: Baixar o codigo do repositorio
@@ -18,17 +18,17 @@ jobs:
       with:
         python-version: '3.12' 
 
-    - name: Instalar bibliotecas matematicas e o PyInstaller
+    - name: Instalar bibliotecas fixadas
       run: |
         python -m pip install --upgrade pip
-        pip install pandas openpyxl python-bcb pyinstaller
+        pip install -r requirements.txt
         
-    - name: Fabricar o arquivo .exe (Dr. Nash)
+    - name: Fabricar o aplicativo Windows
       run: |
-        pyinstaller --noconfirm --onefile --windowed --icon=dr_nash.ico --name="Nash_System" nash.py
+        pyinstaller --noconfirm --onedir --windowed --icon=dr_nash.ico --add-data "dr_nash.ico;." --name="Nash_System" nash.py
 
-    - name: Salvar o .exe para download
+    - name: Salvar pacote para download
       uses: actions/upload-artifact@v4
       with:
         name: Nash_System_Windows
-        path: dist/Nash_System.exe
+        path: dist/Nash_System
