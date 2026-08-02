@@ -8,13 +8,13 @@ import threading
 import sys
 import os
 
+__version__ = "2.0.0" # Controle de rastreabilidade de laudos
+
 # --- 1. CONFIGURAÇÕES BASE ---
 if getattr(sys, 'frozen', False):
-    # Quando for .exe compilado pelo PyInstaller
-    PASTA_APP = Path(sys.executable).parent # Pasta de fora (onde o .exe foi salvo)
-    PASTA_TEMP = Path(sys._MEIPASS)         # Pasta invisível temporária do ícone
+    PASTA_APP = Path(sys.executable).parent
+    PASTA_TEMP = Path(sys._MEIPASS) if hasattr(sys, '_MEIPASS') else PASTA_APP
 else:
-    # Quando for script Python puro rodando pelo terminal
     PASTA_APP = Path(__file__).parent
     PASTA_TEMP = PASTA_APP
 
@@ -24,25 +24,45 @@ ARQUIVO_TJMG = PASTA_TABELAS / 'tabela_tjmg.xlsx'
 # --- 2. MOTORES MATEMÁTICOS REAIS ---
 def carregar_tjmg():
     try:
+        if not ARQUIVO_TJMG.exists():
+            raise FileNotFoundError("O arquivo 'tabela_tjmg.xlsx' não foi encontrado na pasta 'Tabelas_Oficiais'.")
+            
         df = pd.read_excel(ARQUIVO_TJMG, sheet_name='Plan1', skiprows=8, names=['ANO', 'MÊS', 'ÍNDICE'])
         df = df.dropna(subset=['MÊS', 'ÍNDICE'])
         meses = {'Janeiro': '01', 'Fevereiro': '02', 'Março': '03', 'Abril': '04', 'Maio': '05', 'Junho': '06', 'Julho': '07', 'Agosto': '08', 'Setembro': '09', 'Outubro': '10', 'Novembro': '11', 'Dezembro': '12'}
         df['MÊS_NUM'] = df['MÊS'].str.strip().map(meses)
         df = df.dropna(subset=['MÊS_NUM'])
         df['DATA_REF'] = pd.to_datetime(df['ANO'].astype(int).astype(str) + '-' + df['MÊS_NUM'] + '-01')
+        
+        # TRAVA DE SEGURANÇA (Alerta de Defasagem)
+        ultima_data = df['DATA_REF'].max()
+        hoje = pd.Timestamp.today()
+        diferenca_meses = (hoje.year - ultima_data.year) * 12 + (hoje.month - ultima_data.month)
+        if diferenca_meses >= 2:
+            raise ValueError(f"ATENÇÃO: A tabela do TJMG está desatualizada (último mês: {ultima_data.strftime('%m/%Y')}).\n\nBaixe a versão mais recente no site do Tribunal e substitua o arquivo na pasta 'Tabelas_Oficiais'.")
+            
         return df[['DATA_REF', 'ÍNDICE']].set_index('DATA_REF')
+    except ValueError as ve:
+        raise ve
     except Exception as e:
-        raise Exception(f"Erro ao carregar tabela do TJMG: {e}")
+        raise Exception(f"Falha ao carregar tabela do TJMG:\n{e}")
 
 def carregar_taxas_bcb():
     try:
         from bcb import sgs
-        df = sgs.get({'SELIC': 4390}, start='1999-01-01')
-        df = df / 100.0  
-        df.index = df.index.to_period('M').to_timestamp()
-        return df
+        # Selic (4390), IPCA (433) e Taxa Legal (29543 - Lei 14.905/2024)
+        df_selic = sgs.get({'SELIC': 4390}, start='1999-01-01') / 100.0
+        df_selic.index = df_selic.index.to_period('M').to_timestamp()
+        
+        df_ipca = sgs.get({'IPCA': 433}, start='1999-01-01') / 100.0
+        df_ipca.index = df_ipca.index.to_period('M').to_timestamp()
+        
+        df_tl = sgs.get({'TAXA_LEGAL': 29543}, start='2024-08-01') / 100.0
+        df_tl.index = df_tl.index.to_period('M').to_timestamp()
+        
+        return {'SELIC': df_selic, 'IPCA': df_ipca, 'TAXA_LEGAL': df_tl}
     except Exception as e:
-        raise Exception(f"Erro ao conectar com BCB: {e}")
+        raise Exception("Sem conexão com a internet ou a API do Banco Central está fora do ar.\nVerifique sua rede e tente novamente.")
 
 def obter_indice_tjmg(df_tjmg, data):
     if df_tjmg is None: return 1.0
@@ -61,10 +81,60 @@ def calcular_fator_r5(df_tjmg, data_base, data_calculo):
 
 def calcular_fator_r4(df_bcb, data_base, data_calculo):
     if df_bcb is None: return 1.0
+    df_selic = df_bcb['SELIC']
     data_base_mes = pd.to_datetime(f"{data_base.year}-{data_base.month:02d}-01")
     data_calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
-    mask = (df_bcb.index >= data_base_mes) & (df_bcb.index <= data_calc_mes)
-    return (1 + df_bcb.loc[mask, 'SELIC']).prod()
+    mask = (df_selic.index >= data_base_mes) & (df_selic.index <= data_calc_mes)
+    return (1 + df_selic.loc[mask, 'SELIC']).prod()
+
+def calcular_fator_r3(df_bcb, data_base, data_calculo):
+    # Lei 14.905/2024 (CMN 5.171/2024): Atualização Monetária (IPCA) + Taxa Legal (Juros Simples)
+    if df_bcb is None: return 1.0
+    df_ipca = df_bcb['IPCA']
+    df_tl = df_bcb['TAXA_LEGAL']
+    
+    data_base_mes = pd.to_datetime(f"{data_base.year}-{data_base.month:02d}-01")
+    data_calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
+    
+    mask_ipca = (df_ipca.index >= data_base_mes) & (df_ipca.index <= data_calc_mes)
+    fator_ipca = (1 + df_ipca.loc[mask_ipca, 'IPCA']).prod()
+    
+    mask_tl = (df_tl.index >= data_base_mes) & (df_tl.index <= data_calc_mes)
+    juros_tl = df_tl.loc[mask_tl, 'TAXA_LEGAL'].sum() 
+    
+    return fator_ipca * (1 + juros_tl)
+
+def calcular_fator_r2(df_bcb, data_base, data_calculo):
+    data_corte = pd.to_datetime("2024-08-30")
+    corte_mes = pd.to_datetime("2024-08-01")
+    
+    if data_base >= data_corte:
+        return calcular_fator_r3(df_bcb, data_base, data_calculo)
+        
+    df_selic = df_bcb['SELIC']
+    data_base_mes = pd.to_datetime(f"{data_base.year}-{data_base.month:02d}-01")
+    
+    # Fase 1 (<= corte): Selic pura
+    mask_fase1 = (df_selic.index >= data_base_mes) & (df_selic.index <= corte_mes)
+    fator_fase1 = (1 + df_selic.loc[mask_fase1, 'SELIC']).prod()
+    
+    # Fase 2 (> corte): Lei Nova estritamente após o corte, para não duplicar
+    data_calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
+    if data_calc_mes > corte_mes:
+        df_ipca = df_bcb['IPCA']
+        df_tl = df_bcb['TAXA_LEGAL']
+        
+        mask_ipca = (df_ipca.index > corte_mes) & (df_ipca.index <= data_calc_mes)
+        fator_ipca = (1 + df_ipca.loc[mask_ipca, 'IPCA']).prod()
+        
+        mask_tl = (df_tl.index > corte_mes) & (df_tl.index <= data_calc_mes)
+        juros_tl = df_tl.loc[mask_tl, 'TAXA_LEGAL'].sum()
+        
+        fator_fase2 = fator_ipca * (1 + juros_tl)
+    else:
+        fator_fase2 = 1.0
+        
+    return fator_fase1 * fator_fase2
 
 def calcular_fator_r1(df_tjmg, df_bcb, data_base, data_calculo):
     data_corte = pd.to_datetime("2024-08-30")
@@ -74,6 +144,7 @@ def calcular_fator_r1(df_tjmg, df_bcb, data_base, data_calculo):
     indice_base = obter_indice_tjmg(df_tjmg, data_base)
     indice_corte = obter_indice_tjmg(df_tjmg, data_corte)
     fator_cm = indice_base / indice_corte if indice_corte != 0 else 1.0
+    
     meses = (data_corte.year - data_base.year) * 12 + (data_corte.month - data_base.month)
     if meses < 0: meses = 0
     fator_fase1 = fator_cm * (1 + (meses * 0.01))
@@ -81,25 +152,14 @@ def calcular_fator_r1(df_tjmg, df_bcb, data_base, data_calculo):
     if df_bcb is not None:
         corte_mes = pd.to_datetime(f"{data_corte.year}-{data_corte.month:02d}-01")
         calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
-        mask = (df_bcb.index > corte_mes) & (df_bcb.index <= calc_mes)
-        fator_fase2 = (1 + df_bcb.loc[mask, 'SELIC']).prod()
+        
+        df_selic = df_bcb['SELIC']
+        mask = (df_selic.index > corte_mes) & (df_selic.index <= calc_mes)
+        fator_fase2 = (1 + df_selic.loc[mask, 'SELIC']).prod()
     else:
         fator_fase2 = 1.0
 
     return fator_fase1 * fator_fase2
-
-def calcular_fator_r2(df_bcb, data_base, data_calculo):
-    data_corte = pd.to_datetime("2024-08-30")
-    if data_base >= data_corte:
-        return calcular_fator_r4(df_bcb, data_base, data_calculo)
-    
-    fator_fase1 = calcular_fator_r4(df_bcb, data_base, data_corte)
-    fator_fase2 = calcular_fator_r4(df_bcb, data_corte, data_calculo)
-    
-    return fator_fase1 * fator_fase2
-
-def calcular_fator_r3(df_bcb, data_base, data_calculo):
-    return calcular_fator_r4(df_bcb, data_base, data_calculo)
 
 # --- 3. PROCESSAMENTO CENTRAL DO NASH ---
 def executar_nash(caminho_entrada, arquivo_saida):
@@ -130,19 +190,19 @@ def executar_nash(caminho_entrada, arquivo_saida):
             df_danos.at[idx, 'Desc_Regra'] = "TJMG + Juros de 1% a.m. até 08/2024; após, Selic"
             fator = calcular_fator_r1(tabela_tjmg, df_bcb, data, data_calculo)
         elif regra == 'R2':
-            df_danos.at[idx, 'Desc_Regra'] = "Selic até 08/2024; após, critérios da Lei Nova (14.905/24)"
+            df_danos.at[idx, 'Desc_Regra'] = "Selic até 08/2024; após, Lei 14.905/24"
             fator = calcular_fator_r2(df_bcb, data, data_calculo)
         elif regra == 'R3':
-            df_danos.at[idx, 'Desc_Regra'] = "IPCA + (Selic deduzida do IPCA)"
+            df_danos.at[idx, 'Desc_Regra'] = "Lei 14.905/24: IPCA + Taxa Legal"
             fator = calcular_fator_r3(df_bcb, data, data_calculo)
         elif regra == 'R4':
-            df_danos.at[idx, 'Desc_Regra'] = "Taxa Selic (critério único) durante todo o período"
+            df_danos.at[idx, 'Desc_Regra'] = "Taxa Selic pura durante todo o período"
             fator = calcular_fator_r4(df_bcb, data, data_calculo)
         elif regra == 'R5':
-            df_danos.at[idx, 'Desc_Regra'] = "Tabela TJMG + Juros de 1% a.m. (Critério único)"
+            df_danos.at[idx, 'Desc_Regra'] = "Tabela TJMG + Juros 1% a.m."
             fator = calcular_fator_r5(tabela_tjmg, data, data_calculo)
         else:
-            df_danos.at[idx, 'Desc_Regra'] = "Regra não identificada. Sem correção."
+            df_danos.at[idx, 'Desc_Regra'] = "Regra não identificada."
             fator = 1.0
 
         valor_corr = valor * fator
@@ -154,7 +214,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         data = pd.to_datetime(row['Data Desembolso'], dayfirst=True)
         valor = float(row['Valor Histórico'])
         fator = calcular_fator_r5(tabela_tjmg, data, data_calculo) 
-        df_custas.at[idx, 'Desc_Regra'] = "Tabela TJMG + Juros de 1% a.m. (Critério único)"
+        df_custas.at[idx, 'Desc_Regra'] = "Tabela TJMG + Juros 1% a.m."
         
         valor_corr = valor * fator
         exigivel = 0.0 if jg else valor_corr
@@ -201,18 +261,23 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     ws['A1'].font = f_titulo
     ws['A1'].fill = fundo_escuro
     ws['A1'].alignment = centro
-
-    ws['A3'] = "Processo:"
-    ws['B3'] = processo
-    ws['A4'] = "Tipo de Título:"
-    ws['B4'] = "Sentença (Com Trânsito)" if teve_transito else "Acordo / Sem Trânsito"
-    ws['A5'] = "Justiça Gratuita:"
-    ws['B5'] = "DEFERIDA (Custas Inexigíveis)" if jg else "NÃO REQUERIDA / INDEFERIDA"
     
-    for r in range(3, 6):
+    ws.merge_cells('A2:F2')
+    ws['A2'] = f"Gerado pelo Nash System v{__version__} em {pd.Timestamp.today().strftime('%d/%m/%Y às %H:%M')}"
+    ws['A2'].alignment = Alignment(horizontal="right")
+    ws['A2'].font = Font(name="Arial", size=9, italic=True)
+
+    ws['A4'] = "Processo:"
+    ws['B4'] = processo
+    ws['A5'] = "Tipo de Título:"
+    ws['B5'] = "Sentença (Com Trânsito)" if teve_transito else "Acordo / Sem Trânsito"
+    ws['A6'] = "Justiça Gratuita:"
+    ws['B6'] = "DEFERIDA (Custas Inexigíveis)" if jg else "NÃO REQUERIDA / INDEFERIDA"
+    
+    for r in range(4, 7):
         ws.cell(row=r, column=1).font = f_negrito
 
-    linha_atual = 7
+    linha_atual = 8
 
     ws.merge_cells(f'A{linha_atual}:F{linha_atual}')
     ws[f'A{linha_atual}'] = "1. DANOS MATERIAIS / NOTAS"
@@ -307,11 +372,10 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
 class NashGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Nash System - Liquidação Judicial")
-        self.root.geometry("600x480")
+        self.root.title(f"Nash System - Liquidação Judicial (v{__version__})")
+        self.root.geometry("600x500")
         self.root.configure(padx=20, pady=20)
         
-        # Agora busca na pasta temporária correta quando for .exe
         icone_path = PASTA_TEMP / "dr_nash.ico"
         if icone_path.exists():
             try:
@@ -322,16 +386,15 @@ class NashGUI:
         tk.Label(root, text="NASH SYSTEM", font=("Arial", 16, "bold")).pack(pady=(0, 5))
         tk.Label(root, text="Assistente de Cálculos Judiciais", font=("Arial", 10, "italic")).pack(pady=(0, 20))
 
-        # Legenda das Regras
         frame_regras = tk.LabelFrame(root, text=" 📖 Dicionário de Regras Matemáticas ", font=("Arial", 10, "bold"), padx=10, pady=10)
         frame_regras.pack(fill="x", pady=10)
 
         regras = [
-            ("R1", "TJMG + Juros de 1% a.m. até 08/2024; após, Taxa Selic"),
-            ("R2", "Selic até 08/2024; após, critérios da Lei Nova (14.905/24)"),
-            ("R3", "IPCA + (Selic deduzida do IPCA)"),
+            ("R1", "TJMG + Juros 1% a.m. até 08/2024; após, Taxa Selic"),
+            ("R2", "Selic até 08/2024; após, Lei 14.905/24 (IPCA + Taxa Legal)"),
+            ("R3", "Lei 14.905/24: IPCA + Taxa Legal (Juros Simples)"),
             ("R4", "Taxa Selic (critério único) durante todo o período"),
-            ("R5", "Tabela TJMG + Juros de 1% a.m. (critério único, Lei Antiga)")
+            ("R5", "Tabela TJMG + Juros de 1% a.m. (critério único)")
         ]
 
         for regra, desc in regras:
@@ -340,11 +403,9 @@ class NashGUI:
             tk.Label(linha, text=f"{regra}: ", font=("Arial", 10, "bold")).pack(side="left")
             tk.Label(linha, text=desc, font=("Arial", 10)).pack(side="left")
 
-        # Status
         self.lbl_status = tk.Label(root, text="Aguardando arquivo...", font=("Arial", 10), fg="gray")
         self.lbl_status.pack(pady=15)
 
-        # Botão Principal
         self.btn_processar = tk.Button(root, text="📂 Selecionar Planilha e Calcular", font=("Arial", 12, "bold"), bg="#2F5597", fg="white", padx=20, pady=10, command=self.iniciar_processo)
         self.btn_processar.pack()
 
@@ -353,9 +414,7 @@ class NashGUI:
             title="Selecione a Planilha do Cliente",
             filetypes=[("Planilhas Excel", "*.xlsx")]
         )
-        
-        if not caminho:
-            return
+        if not caminho: return
             
         caminho_entrada = Path(caminho)
         arquivo_saida = caminho_entrada.parent / f"Laudo_{caminho_entrada.name}"
@@ -369,23 +428,18 @@ class NashGUI:
     def processar_em_background(self, caminho_entrada, arquivo_saida):
         try:
             executar_nash(caminho_entrada, arquivo_saida)
-            
             def sucesso():
                 self.lbl_status.config(text=f"Concluído! Salvo em:\n{arquivo_saida.name}", fg="green")
                 self.btn_processar.config(state="normal")
                 messagebox.showinfo("Sucesso", "Liquidação calculada e laudo gerado com sucesso!")
-                
             self.root.after(0, sucesso)
             
         except Exception as e:
-            # Salva a string do erro antes de entrar na função interna
             erro_msg = str(e)
-            
             def erro():
                 self.lbl_status.config(text="Erro durante o cálculo.", fg="red")
                 self.btn_processar.config(state="normal")
-                messagebox.showerror("Erro", erro_msg) # Usa a string salva
-                
+                messagebox.showerror("Erro de Execução", erro_msg) 
             self.root.after(0, erro)
 
 if __name__ == "__main__":
