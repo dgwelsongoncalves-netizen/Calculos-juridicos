@@ -15,10 +15,8 @@ A arquitetura foi desenhada para manter a organização contínua dos processos 
 
 ## ⚙️ Dicionário de Regras Matemáticas
 
-Ao preencher o template, utilize as seguintes chaves na coluna "Regra":
-
 * **R1:** TJMG + Juros de 1% a.m. até 30/08/2024; após, Taxa Selic (Transição da Lei Nova).
-* **R2:** Selic desde o evento até vigência da Lei Nova.
+* **R2:** Taxa Selic do evento até 30/08/2024; após, critérios da Lei Nova (Lei 14.905/2024).
 * **R3:** IPCA + (Selic deduzida do IPCA) desde o desembolso.
 * **R4:** Taxa Selic (critério único) durante todo o período.
 * **R5:** Tabela TJMG + Juros de 1% a.m. como critério único em todo o período (Apenas Lei Antiga).

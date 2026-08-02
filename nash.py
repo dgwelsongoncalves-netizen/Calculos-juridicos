@@ -10,11 +10,15 @@ import os
 
 # --- 1. CONFIGURAÇÕES BASE ---
 if getattr(sys, 'frozen', False):
-    PASTA_BASE = Path(sys.executable).parent
+    # Quando for .exe compilado pelo PyInstaller
+    PASTA_APP = Path(sys.executable).parent # Pasta de fora (onde o .exe foi salvo)
+    PASTA_TEMP = Path(sys._MEIPASS)         # Pasta invisível temporária do ícone
 else:
-    PASTA_BASE = Path(__file__).parent
+    # Quando for script Python puro rodando pelo terminal
+    PASTA_APP = Path(__file__).parent
+    PASTA_TEMP = PASTA_APP
 
-PASTA_TABELAS = PASTA_BASE / 'Tabelas_Oficiais'
+PASTA_TABELAS = PASTA_APP / 'Tabelas_Oficiais'
 ARQUIVO_TJMG = PASTA_TABELAS / 'tabela_tjmg.xlsx'
 
 # --- 2. MOTORES MATEMÁTICOS REAIS ---
@@ -89,9 +93,7 @@ def calcular_fator_r2(df_bcb, data_base, data_calculo):
     if data_base >= data_corte:
         return calcular_fator_r4(df_bcb, data_base, data_calculo)
     
-    # Fase 1: Selic do evento até a entrada em vigor da Lei Nova (30/08/2024)
     fator_fase1 = calcular_fator_r4(df_bcb, data_base, data_corte)
-    # Fase 2: Critérios da Lei Nova (30/08/2024 em diante)
     fator_fase2 = calcular_fator_r4(df_bcb, data_corte, data_calculo)
     
     return fator_fase1 * fator_fase2
@@ -309,7 +311,8 @@ class NashGUI:
         self.root.geometry("600x480")
         self.root.configure(padx=20, pady=20)
         
-        icone_path = PASTA_BASE / "dr_nash.ico"
+        # Agora busca na pasta temporária correta quando for .exe
+        icone_path = PASTA_TEMP / "dr_nash.ico"
         if icone_path.exists():
             try:
                 self.root.iconbitmap(str(icone_path))
@@ -375,10 +378,13 @@ class NashGUI:
             self.root.after(0, sucesso)
             
         except Exception as e:
+            # Salva a string do erro antes de entrar na função interna
+            erro_msg = str(e)
+            
             def erro():
                 self.lbl_status.config(text="Erro durante o cálculo.", fg="red")
                 self.btn_processar.config(state="normal")
-                messagebox.showerror("Erro", str(e))
+                messagebox.showerror("Erro", erro_msg) # Usa a string salva
                 
             self.root.after(0, erro)
 
