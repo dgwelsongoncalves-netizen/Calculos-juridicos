@@ -1,8 +1,12 @@
 from bcb import sgs
 
-print("Buscando IPCA e Selic no Banco Central...")
-# Puxa IPCA (433) e Selic (11) simultaneamente
-dados = sgs.get({'IPCA': 433, 'SELIC': 11}, last=5)
+print("Conectando ao Banco Central...")
 
-print("\nÚltimos índices consolidados:")
-print(dados)
+try:
+    # Tenta puxar apenas os últimos 5 dias da Selic para ser rápido
+    selic = sgs.get({'SELIC': 4390}, last=5)
+    print("✅ Sucesso! O BCB respondeu. Dados recebidos:")
+    print(selic)
+except Exception as e:
+    print("❌ FALHA NA CONEXÃO. O erro real enviado pelo sistema foi:")
+    print(repr(e))

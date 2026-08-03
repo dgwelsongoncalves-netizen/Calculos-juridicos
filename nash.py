@@ -8,7 +8,7 @@ import threading
 import sys
 import os
 
-__version__ = "2.1.0" # Regras reorganizadas cronologicamente
+__version__ = "2.3.3" # Refinamento lógico definitivo para Parâmetros e Justiça Gratuita
 
 # --- 1. CONFIGURAÇÕES BASE ---
 if getattr(sys, 'frozen', False):
@@ -34,7 +34,6 @@ def carregar_tjmg():
         df = df.dropna(subset=['MÊS_NUM'])
         df['DATA_REF'] = pd.to_datetime(df['ANO'].astype(int).astype(str) + '-' + df['MÊS_NUM'] + '-01')
         
-        # TRAVA DE SEGURANÇA (Tolerância de 3 meses)
         ultima_data = df['DATA_REF'].max()
         hoje = pd.Timestamp.today()
         diferenca_meses = (hoje.year - ultima_data.year) * 12 + (hoje.month - ultima_data.month)
@@ -71,9 +70,7 @@ def obter_indice_tjmg(df_tjmg, data):
     except KeyError:
         return float(df_tjmg['ÍNDICE'].iloc[-1])
 
-# --- 3. MOTORES MATEMÁTICOS ORGANIZADOS ---
-
-# REGRA 1: Tabela TJMG + Juros de 1% a.m.
+# --- 3. MOTORES MATEMÁTICOS PRINCIPAIS ---
 def calcular_tjmg_juros(df_tjmg, data_base, data_calculo):
     fator_cm = obter_indice_tjmg(df_tjmg, data_base)
     meses = (data_calculo.year - data_base.year) * 12 + (data_calculo.month - data_base.month)
@@ -81,7 +78,6 @@ def calcular_tjmg_juros(df_tjmg, data_base, data_calculo):
     fator_juros = meses * 0.01
     return fator_cm * (1 + fator_juros)
 
-# REGRA 2: Taxa Selic pura
 def calcular_selic_pura(df_bcb, data_base, data_calculo):
     if df_bcb is None: return 1.0
     df_selic = df_bcb['SELIC']
@@ -90,112 +86,117 @@ def calcular_selic_pura(df_bcb, data_base, data_calculo):
     mask = (df_selic.index >= data_base_mes) & (df_selic.index <= data_calc_mes)
     return (1 + df_selic.loc[mask, 'SELIC']).prod()
 
-# REGRA 3: TJMG + Juros 1% a.m. até 08/2024; após, Taxa Selic
 def calcular_tjmg_selic(df_tjmg, df_bcb, data_base, data_calculo):
     data_corte = pd.to_datetime("2024-08-30")
-    if data_base >= data_corte:
-        return calcular_selic_pura(df_bcb, data_base, data_calculo)
-
+    if data_base >= data_corte: return calcular_selic_pura(df_bcb, data_base, data_calculo)
     indice_base = obter_indice_tjmg(df_tjmg, data_base)
     indice_corte = obter_indice_tjmg(df_tjmg, data_corte)
     fator_cm = indice_base / indice_corte if indice_corte != 0 else 1.0
-    
-    meses = (data_corte.year - data_base.year) * 12 + (data_corte.month - data_base.month)
-    if meses < 0: meses = 0
+    meses = max(0, (data_corte.year - data_base.year) * 12 + (data_corte.month - data_base.month))
     fator_fase1 = fator_cm * (1 + (meses * 0.01))
-
     if df_bcb is not None:
         corte_mes = pd.to_datetime(f"{data_corte.year}-{data_corte.month:02d}-01")
         calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
-        
         df_selic = df_bcb['SELIC']
         mask = (df_selic.index > corte_mes) & (df_selic.index <= calc_mes)
         fator_fase2 = (1 + df_selic.loc[mask, 'SELIC']).prod()
-    else:
-        fator_fase2 = 1.0
-
+    else: fator_fase2 = 1.0
     return fator_fase1 * fator_fase2
 
-# REGRA 4: TJMG + Juros 1% a.m. até 08/2024; após, Lei 14.905/24
 def calcular_tjmg_leinova(df_tjmg, df_bcb, data_base, data_calculo):
     data_corte = pd.to_datetime("2024-08-30")
     corte_mes = pd.to_datetime("2024-08-01")
-    
-    if data_base >= data_corte:
-        return calcular_leinova_pura(df_bcb, data_base, data_calculo)
-        
+    if data_base >= data_corte: return calcular_leinova_pura(df_bcb, data_base, data_calculo)
     indice_base = obter_indice_tjmg(df_tjmg, data_base)
     indice_corte = obter_indice_tjmg(df_tjmg, data_corte)
     fator_cm_fase1 = indice_base / indice_corte if indice_corte != 0 else 1.0
-    
-    meses = (data_corte.year - data_base.year) * 12 + (data_corte.month - data_base.month)
-    if meses < 0: meses = 0
+    meses = max(0, (data_corte.year - data_base.year) * 12 + (data_corte.month - data_base.month))
     fator_fase1 = fator_cm_fase1 * (1 + (meses * 0.01))
-    
     data_calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
     if data_calc_mes > corte_mes and df_bcb is not None:
         df_ipca = df_bcb['IPCA']
         df_tl = df_bcb['TAXA_LEGAL']
-        
         mask_ipca = (df_ipca.index > corte_mes) & (df_ipca.index <= data_calc_mes)
         fator_ipca = (1 + df_ipca.loc[mask_ipca, 'IPCA']).prod()
-        
         mask_tl = (df_tl.index > corte_mes) & (df_tl.index <= data_calc_mes)
         juros_tl = df_tl.loc[mask_tl, 'TAXA_LEGAL'].sum()
-        
         fator_fase2 = fator_ipca * (1 + juros_tl)
-    else:
-        fator_fase2 = 1.0
-        
+    else: fator_fase2 = 1.0
     return fator_fase1 * fator_fase2
 
-# REGRA 5: Selic até 08/2024; após, Lei 14.905/24
 def calcular_selic_leinova(df_bcb, data_base, data_calculo):
     data_corte = pd.to_datetime("2024-08-30")
     corte_mes = pd.to_datetime("2024-08-01")
-    
-    if data_base >= data_corte:
-        return calcular_leinova_pura(df_bcb, data_base, data_calculo)
-        
+    if data_base >= data_corte: return calcular_leinova_pura(df_bcb, data_base, data_calculo)
     df_selic = df_bcb['SELIC']
     data_base_mes = pd.to_datetime(f"{data_base.year}-{data_base.month:02d}-01")
-    
     mask_fase1 = (df_selic.index >= data_base_mes) & (df_selic.index <= corte_mes)
     fator_fase1 = (1 + df_selic.loc[mask_fase1, 'SELIC']).prod()
-    
     data_calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
     if data_calc_mes > corte_mes:
         df_ipca = df_bcb['IPCA']
         df_tl = df_bcb['TAXA_LEGAL']
-        
         mask_ipca = (df_ipca.index > corte_mes) & (df_ipca.index <= data_calc_mes)
         fator_ipca = (1 + df_ipca.loc[mask_ipca, 'IPCA']).prod()
-        
         mask_tl = (df_tl.index > corte_mes) & (df_tl.index <= data_calc_mes)
         juros_tl = df_tl.loc[mask_tl, 'TAXA_LEGAL'].sum()
-        
         fator_fase2 = fator_ipca * (1 + juros_tl)
-    else:
-        fator_fase2 = 1.0
-        
+    else: fator_fase2 = 1.0
     return fator_fase1 * fator_fase2
 
-# REGRA 6: Lei 14.905/24: IPCA + Taxa Legal puros
 def calcular_leinova_pura(df_bcb, data_base, data_calculo):
     if df_bcb is None: return 1.0
     df_ipca = df_bcb['IPCA']
     df_tl = df_bcb['TAXA_LEGAL']
-    
     data_base_mes = pd.to_datetime(f"{data_base.year}-{data_base.month:02d}-01")
     data_calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
-    
     mask_ipca = (df_ipca.index >= data_base_mes) & (df_ipca.index <= data_calc_mes)
     fator_ipca = (1 + df_ipca.loc[mask_ipca, 'IPCA']).prod()
-    
-    mask_tl = (df_tl.index >= data_base_mes) & (df_tl.index <= data_calc_mes)
-    juros_tl = df_tl.loc[mask_tl, 'TAXA_LEGAL'].sum() 
-    
+    juros_tl = df_tl.loc[(df_tl.index >= data_base_mes) & (df_tl.index <= data_calc_mes), 'TAXA_LEGAL'].sum() 
     return fator_ipca * (1 + juros_tl)
+
+# --- MOTOR EXCLUSIVO: HONORÁRIOS EQUITATIVOS (DATAS DIVIDIDAS) ---
+def atualizar_honorarios_fixos(valor, data_sentenca, data_transito, df_tjmg, df_bcb, data_calculo):
+    data_corte = pd.to_datetime("2024-08-30")
+    corte_mes = pd.to_datetime("2024-08-01")
+    calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
+    sentenca_mes = pd.to_datetime(f"{data_sentenca.year}-{data_sentenca.month:02d}-01")
+
+    if data_sentenca < data_corte:
+        indice_sent = obter_indice_tjmg(df_tjmg, data_sentenca)
+        indice_corte = obter_indice_tjmg(df_tjmg, data_corte)
+        fator_cm_fase1 = indice_sent / indice_corte if indice_corte != 0 else 1.0
+    else:
+        fator_cm_fase1 = 1.0
+
+    fator_cm_fase2 = 1.0
+    if calc_mes > corte_mes and df_bcb is not None:
+        inicio_cm_fase2 = corte_mes if data_sentenca < data_corte else sentenca_mes
+        df_ipca = df_bcb['IPCA']
+        mask_ipca = (df_ipca.index > inicio_cm_fase2) & (df_ipca.index <= calc_mes)
+        fator_cm_fase2 = (1 + df_ipca.loc[mask_ipca, 'IPCA']).prod()
+
+    valor_corrigido = valor * fator_cm_fase1 * fator_cm_fase2
+
+    juros_total = 0.0
+    if pd.notna(data_transito):
+        transito_mes = pd.to_datetime(f"{data_transito.year}-{data_transito.month:02d}-01")
+        if data_transito < data_corte:
+            meses = (data_corte.year - data_transito.year) * 12 + (data_corte.month - data_transito.month)
+            juros_fase1 = max(0, meses) * 0.01
+        else:
+            juros_fase1 = 0.0
+
+        juros_fase2 = 0.0
+        if calc_mes > corte_mes and df_bcb is not None:
+            inicio_juros_fase2 = corte_mes if data_transito < data_corte else transito_mes
+            df_tl = df_bcb['TAXA_LEGAL']
+            mask_tl = (df_tl.index > inicio_juros_fase2) & (df_tl.index <= calc_mes)
+            juros_fase2 = df_tl.loc[mask_tl, 'TAXA_LEGAL'].sum()
+
+        juros_total = juros_fase1 + juros_fase2
+
+    return valor_corrigido * (1 + juros_total)
 
 # --- 4. PROCESSAMENTO CENTRAL ---
 def executar_nash(caminho_entrada, arquivo_saida):
@@ -204,12 +205,40 @@ def executar_nash(caminho_entrada, arquivo_saida):
     
     df_param = pd.read_excel(caminho_entrada, sheet_name='Parametros', header=None, index_col=0)
     processo = str(df_param.loc['Processo', 1])
+    
     data_transito_raw = df_param.loc['Data do Trânsito', 1]
     teve_transito = not pd.isna(data_transito_raw)
     
     jg = str(df_param.loc['Justiça Gratuita', 1]).strip().upper() == 'SIM'
-    pag_voluntario = str(df_param.loc['Pagamento Voluntário 15d', 1]).strip().upper() == 'SIM'
-    hon_perc = float(df_param.loc['Honorários Sucumbência', 1]) / 100
+    
+    # TRATAMENTO DO PAGAMENTO VOLUNTÁRIO
+    pag_voluntario_str = ""
+    try:
+        val_pv = df_param.loc['Pagamento Voluntário 15d', 1]
+        if pd.notna(val_pv):
+            pag_voluntario_str = str(val_pv).strip().upper()
+    except KeyError: pass
+    
+    houve_inadimplemento = (pag_voluntario_str == 'SIM')
+    
+    hon_perc = 0.0
+    try:
+        val_perc = df_param.loc['Honorários Sucumbência', 1]
+        if pd.notna(val_perc) and str(val_perc).strip() != '':
+            hon_perc = float(val_perc) / 100
+    except KeyError: pass
+        
+    hon_fixo = 0.0
+    try:
+        val_fixo = df_param.loc['Honorários Fixos (R$)', 1]
+        if pd.notna(val_fixo) and str(val_fixo).strip() != '':
+            hon_fixo = float(val_fixo)
+    except KeyError: pass
+
+    data_sentenca_raw = None
+    try:
+        data_sentenca_raw = df_param.loc['Data da Sentença', 1]
+    except KeyError: pass
 
     df_danos = pd.read_excel(caminho_entrada, sheet_name='Danos')
     df_custas = pd.read_excel(caminho_entrada, sheet_name='Custas')
@@ -252,8 +281,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
     for idx, row in df_custas.iterrows():
         data = pd.to_datetime(row['Data Desembolso'], dayfirst=True)
         valor = float(row['Valor Histórico'])
-        
-        # Custas SEMPRE usam TJMG (R1 agora)
         fator = calcular_tjmg_juros(tabela_tjmg, data, data_calculo) 
         df_custas.at[idx, 'Desc_Regra'] = "TJMG + Juros 1% a.m."
         
@@ -264,19 +291,37 @@ def executar_nash(caminho_entrada, arquivo_saida):
         total_custas += exigivel
 
     subtotal = total_danos + total_custas
-    valor_honorarios = subtotal * hon_perc
+    
+    if hon_fixo > 0:
+        if pd.notna(data_sentenca_raw):
+            data_sentenca = pd.to_datetime(data_sentenca_raw, dayfirst=True)
+            data_transito_h = pd.to_datetime(data_transito_raw, dayfirst=True) if teve_transito else None
+            
+            valor_honorarios = atualizar_honorarios_fixos(hon_fixo, data_sentenca, data_transito_h, tabela_tjmg, df_bcb, data_calculo)
+            str_transito = data_transito_h.strftime('%d/%m/%Y') if pd.notna(data_transito_h) else "Sem trânsito"
+            desc_hon = f"Honorários Fixos (CM desde {data_sentenca.strftime('%d/%m/%Y')} | Juros desde {str_transito}):"
+        else:
+            valor_honorarios = hon_fixo
+            desc_hon = "Honorários Fixos (Sem Atualização - Falta 'Data da Sentença'):"
+    else:
+        valor_honorarios = subtotal * hon_perc
+        desc_hon = f"Honorários de Sucumbência ({hon_perc*100:g}%):"
+
     base_multa = subtotal + valor_honorarios
     
-    aplica_multa = teve_transito and not pag_voluntario
-    valor_multa = (base_multa * 0.10) if aplica_multa else 0.0
-    honorarios_523 = (base_multa * 0.10) if aplica_multa else 0.0
+    # APLICANDO RIGORosamente AS REGRAS DE CUMPRIMENTO DE SENTENÇA:
+    # 1. Multa de 10%: só entra se houve inadimplemento pós-intimação (SIM).
+    valor_multa = (base_multa * 0.10) if houve_inadimplemento else 0.0
+    
+    # 2. Honorários do 523 (10%): só entram se houve inadimplemento (SIM) E O RÉU NÃO TEM JUSTIÇA GRATUITA.
+    # Como a JG na sua planilha está como "Não", caso estivesse em "SIM", os honorários do 523 cairiam para zero.
+    honorarios_523 = (base_multa * 0.10) if (houve_inadimplemento and not jg) else 0.0
     
     total_geral = base_multa + valor_multa + honorarios_523
-
-    gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, valor_honorarios, valor_multa, honorarios_523, total_geral, arquivo_saida)
+    gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, valor_honorarios, desc_hon, valor_multa, honorarios_523, total_geral, arquivo_saida)
 
 # --- 5. GERAÇÃO DO LAUDO FORMATADO ---
-def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, multa, hon_523, total, arquivo_saida):
+def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, desc_hon, multa, hon_523, total, arquivo_saida):
     wb = Workbook()
     ws = wb.active
     ws.title = "Laudo de Liquidação"
@@ -315,8 +360,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     ws['A6'] = "Justiça Gratuita:"
     ws['B6'] = "DEFERIDA (Custas Inexigíveis)" if jg else "NÃO REQUERIDA / INDEFERIDA"
     
-    for r in range(4, 7):
-        ws.cell(row=r, column=1).font = f_negrito
+    for r in range(4, 7): ws.cell(row=r, column=1).font = f_negrito
 
     linha_atual = 8
 
@@ -381,32 +425,31 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         ws.cell(row=linha_atual, column=1, value=desc).alignment = Alignment(horizontal="right")
         c_val = ws.cell(row=linha_atual, column=6, value=valor)
         c_val.number_format = moeda
-        
         fonte_usada = f_negrito if negrito else f_normal
         ws.cell(row=linha_atual, column=1).font = fonte_usada
         c_val.font = fonte_usada
-        
         if destaque:
             ws.cell(row=linha_atual, column=1).fill = fundo_cinza
             c_val.fill = fundo_cinza
-            
         for i in range(1, 7): ws.cell(row=linha_atual, column=i).border = borda
         linha_atual += 1
 
     add_total("SUBTOTAL (Principal + Custas):", subtotal, True)
-    add_total("Honorários de Sucumbência:", hon)
+    add_total(desc_hon, hon)
+    
     if multa > 0:
         add_total("Multa Art. 523 CPC (10%):", multa)
+    if hon_523 > 0:
         add_total("Honorários Fase Cumprimento Art. 523 CPC (10%):", hon_523)
+        
     add_total("TOTAL GERAL DEVIDO:", total, True, True)
 
     ws.column_dimensions['A'].width = 15
     ws.column_dimensions['B'].width = 35
     ws.column_dimensions['C'].width = 16
     ws.column_dimensions['D'].width = 16
-    ws.column_dimensions['E'].width = 50 
+    ws.column_dimensions['E'].width = 54 
     ws.column_dimensions['F'].width = 20
-
     wb.save(arquivo_saida)
 
 # --- 6. INTERFACE GRÁFICA (Dr. Nash) ---
@@ -419,10 +462,8 @@ class NashGUI:
         
         icone_path = PASTA_TEMP / "dr_nash.ico"
         if icone_path.exists():
-            try:
-                self.root.iconbitmap(str(icone_path))
-            except:
-                pass
+            try: self.root.iconbitmap(str(icone_path))
+            except: pass
 
         tk.Label(root, text="NASH SYSTEM", font=("Arial", 16, "bold")).pack(pady=(0, 5))
         tk.Label(root, text="Assistente de Cálculos Judiciais", font=("Arial", 10, "italic")).pack(pady=(0, 15))
@@ -430,7 +471,6 @@ class NashGUI:
         frame_regras = tk.LabelFrame(root, text=" 📖 Dicionário de Regras Matemáticas ", font=("Arial", 10, "bold"), padx=10, pady=8)
         frame_regras.pack(fill="x", pady=5)
 
-        # Regras ordenadas cronologicamente
         regras = [
             ("R1", "Tabela TJMG + Juros de 1% a.m. (critério único)"),
             ("R2", "Taxa Selic (critério único) durante todo o período"),
@@ -439,7 +479,6 @@ class NashGUI:
             ("R5", "Selic até 08/2024; após, Lei 14.905/24"),
             ("R6", "Lei 14.905/24: IPCA + Taxa Legal (critério único)")
         ]
-
         for regra, desc in regras:
             linha = tk.Frame(frame_regras)
             linha.pack(anchor="w", pady=1)
@@ -453,19 +492,13 @@ class NashGUI:
         self.btn_processar.pack()
 
     def iniciar_processo(self):
-        caminho = filedialog.askopenfilename(
-            title="Selecione a Planilha do Cliente",
-            filetypes=[("Planilhas Excel", "*.xlsx")]
-        )
+        caminho = filedialog.askopenfilename(title="Selecione a Planilha do Cliente", filetypes=[("Planilhas Excel", "*.xlsx")])
         if not caminho: return
-            
         caminho_entrada = Path(caminho)
         arquivo_saida = caminho_entrada.parent / f"Laudo_{caminho_entrada.name}"
-
         self.lbl_status.config(text="Conectando ao Banco Central e calculando...", fg="blue")
         self.btn_processar.config(state="disabled")
         self.root.update()
-
         threading.Thread(target=self.processar_em_background, args=(caminho_entrada, arquivo_saida)).start()
 
     def processar_em_background(self, caminho_entrada, arquivo_saida):
@@ -476,7 +509,6 @@ class NashGUI:
                 self.btn_processar.config(state="normal")
                 messagebox.showinfo("Sucesso", "Liquidação calculada e laudo gerado com sucesso!")
             self.root.after(0, sucesso)
-            
         except Exception as e:
             erro_msg = str(e)
             def erro():
