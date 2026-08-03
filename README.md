@@ -1,30 +1,19 @@
-# Nash System - Liquidação Judicial Automatizada ⚖️
+# Nash System - Assistente de Cálculos Judiciais (v2.3.3)
 
-O **Nash System** é uma esteira de automação desenvolvida em Python para padronizar, acelerar e garantir precisão matemática na liquidação de sentenças judiciais (focado nas diretrizes do TJMG e regras do STJ/STF).
+Sistema automatizado de liquidação e atualização de débitos judiciais, desenvolvido para cálculos precisos com base na jurisprudência, Tabela do TJMG e parâmetros da taxa Selic / Lei 14.905/2024.
 
-O sistema processa planilhas padronizadas, conecta-se à API do Banco Central para captura da Taxa Selic temporal, cruza com as Tabelas Práticas dos Tribunais e gera um Laudo Pericial completo, detalhando a memória de cálculo.
+## 🚀 Principais Funcionalidades
+- **Múltiplas Regras Matemáticas:** Suporte a critérios exclusivos (TJMG + Juros, Selic Pura, divisões de períodos pré e pós-agosto de 2024, e o novo padrão IPCA + Taxa Legal).
+- **Honorários Equitativos com Datas Divididas:** Atualização monetária desde a sentença e juros de mora aplicados a partir do trânsito em julgado.
+- **Regra Trifásica de Cumprimento de Sentença:** Tratamento automatizado para o prazo de pagamento voluntário (art. 523 do CPC) conjugado com as diretrizes de Justiça Gratuita do executado.
+- **Integração Nativa com o Banco Central:** Consulta automática e em tempo real das séries temporais do SGS (Selic, IPCA e Taxa Legal).
+- **Relatórios Executivos em Excel:** Geração de laudos formatados com grades profissionais, cores corporativas e indicativos de exigibilidade.
 
-## 📁 Estrutura de Pastas e Esteira de Produção
+## 💻 Requisitos
+- Python 3.10 ou superior
+- Bibliotecas: `pandas`, `openpyxl`, `python-bcb`, `typing-extensions`
 
-A arquitetura foi desenhada para manter a organização contínua dos processos do escritório:
+## 📄 Licença
+Este programa é um software livre: você pode redistribuí-lo e/ou modificá-lo sob os termos da **GNU Affero General Public License (AGPL)** conforme publicada pela Free Software Foundation, na versão 3 da Licença, ou (a seu critério) qualquer versão posterior.
 
-* **`Processos_Entrada/` (A Caixa de Entrada):** Contém o arquivo `template_nash.xlsx`. É aqui que você deve depositar a cópia da planilha preenchida do cliente antes de iniciar a automação.
-* **`Processos_Calculados/` (A Saída):** Onde o laudo finalizado (`.xlsx` e futuramente `.pdf`) será salvo, pronto para ser juntado aos autos.
-* **`Processos_Arquivados/` (O Histórico):** Após o processamento com sucesso, a planilha original de entrada é movida automaticamente para esta pasta, mantendo a caixa de entrada limpa.
-* **`Tabelas_Oficiais/`:** Repositório local com os índices de correção monetária estáticos (ex: Tabela Prática do TJMG).
-
-## ⚙️ Dicionário de Regras Matemáticas
-
-* **R1:** TJMG + Juros de 1% a.m. até 30/08/2024; após, Taxa Selic (Transição da Lei Nova).
-* **R2:** Taxa Selic do evento até 30/08/2024; após, critérios da Lei Nova (Lei 14.905/2024).
-* **R3:** IPCA + (Selic deduzida do IPCA) desde o desembolso.
-* **R4:** Taxa Selic (critério único) durante todo o período.
-* **R5:** Tabela TJMG + Juros de 1% a.m. como critério único em todo o período (Apenas Lei Antiga).
-
-## 🚀 Como Executar Localmente
-
-1. Garanta que o ambiente virtual está ativo.
-2. Certifique-se de que a planilha do cliente está salva em `Processos_Entrada/`.
-3. No terminal, execute:
-   ```bash
-   python nash.py
+Consulte o arquivo `LICENSE` para obter mais detalhes.
