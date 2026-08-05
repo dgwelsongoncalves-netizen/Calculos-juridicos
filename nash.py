@@ -8,7 +8,7 @@ import threading
 import sys
 import os
 
-__version__ = "2.3.5" # Exibição transparente de honorários zerados/inexigíveis sob Justiça Gratuita
+__version__ = "2.3.6" # Nova regra de Custas: IPCA + Taxa Legal (Juros a partir do trânsito)
 
 # --- 1. CONFIGURAÇÕES BASE ---
 if getattr(sys, 'frozen', False):
@@ -155,6 +155,44 @@ def calcular_leinova_pura(df_bcb, data_base, data_calculo):
     juros_tl = df_tl.loc[(df_tl.index >= data_base_mes) & (df_tl.index <= data_calc_mes), 'TAXA_LEGAL'].sum() 
     return fator_ipca * (1 + juros_tl)
 
+# --- MOTOR EXCLUSIVO: CUSTAS PROCESSUAIS (NOVA REGRA IPCA + TAXA LEGAL) ---
+def calcular_custas_ipca_taxalegal(df_bcb, data_desembolso, data_transito, teve_transito, data_calculo):
+    if df_bcb is None: return 1.0
+    df_ipca = df_bcb['IPCA']
+    df_tl = df_bcb['TAXA_LEGAL']
+
+    # 1. Correção Monetária: IPCA desde o desembolso
+    data_base_mes = pd.to_datetime(f"{data_desembolso.year}-{data_desembolso.month:02d}-01")
+    data_calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
+    mask_ipca = (df_ipca.index >= data_base_mes) & (df_ipca.index <= data_calc_mes)
+    fator_ipca = (1 + df_ipca.loc[mask_ipca, 'IPCA']).prod()
+
+    # 2. Juros de Mora: Apenas se houver trânsito
+    juros_total = 0.0
+    if teve_transito and pd.notna(data_transito):
+        transito_mes = pd.to_datetime(f"{data_transito.year}-{data_transito.month:02d}-01")
+        corte_juros = pd.to_datetime("2024-08-01")
+
+        # Se trânsito ocorreu antes da Lei 14.905 (08/2024), aplica 1% a.m. até o corte
+        if transito_mes < corte_juros:
+            meses_1pct = (corte_juros.year - transito_mes.year) * 12 + (corte_juros.month - transito_mes.month)
+            juros_fase1 = max(0, meses_1pct) * 0.01
+            inicio_fase2 = corte_juros
+        else:
+            juros_fase1 = 0.0
+            inicio_fase2 = transito_mes
+
+        # A partir do corte ou do trânsito (o que for posterior), aplica Taxa Legal
+        if data_calc_mes > corte_juros:
+            mask_tl = (df_tl.index > inicio_fase2) & (df_tl.index <= data_calc_mes)
+            juros_fase2 = df_tl.loc[mask_tl, 'TAXA_LEGAL'].sum()
+        else:
+            juros_fase2 = 0.0
+
+        juros_total = juros_fase1 + juros_fase2
+
+    return fator_ipca * (1 + juros_total)
+
 # --- MOTOR EXCLUSIVO: HONORÁRIOS EQUITATIVOS (DATAS DIVIDIDAS) ---
 def atualizar_honorarios_fixos(valor, data_sentenca, data_transito, df_tjmg, df_bcb, data_calculo):
     data_corte = pd.to_datetime("2024-08-30")
@@ -208,10 +246,10 @@ def executar_nash(caminho_entrada, arquivo_saida):
     
     data_transito_raw = df_param.loc['Data do Trânsito', 1]
     teve_transito = not pd.isna(data_transito_raw)
+    data_transito_c = pd.to_datetime(data_transito_raw, dayfirst=True) if teve_transito else None
     
     jg = str(df_param.loc['Justiça Gratuita', 1]).strip().upper() == 'SIM'
     
-    # TRATAMENTO DO PAGAMENTO VOLUNTÁRIO (Lógica corrigida)
     pag_voluntario_str = ""
     try:
         val_pv = df_param.loc['Pagamento Voluntário 15d', 1]
@@ -219,7 +257,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
             pag_voluntario_str = str(val_pv).strip().upper()
     except KeyError: pass
     
-    # Se o preenchimento for 'NÃO' ou 'NAO', significa que houve INADIMPLEMENTO
     houve_inadimplemento = (pag_voluntario_str in ['NÃO', 'NAO'])
     
     hon_perc = 0.0
@@ -241,7 +278,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
         data_sentenca_raw = df_param.loc['Data da Sentença', 1]
     except KeyError: pass
 
-    # Lendo as abas e blindando contra "linhas fantasmas" geradas pelo Excel/LibreOffice
     df_danos = pd.read_excel(caminho_entrada, sheet_name='Danos')
     df_danos = df_danos.dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
 
@@ -286,8 +322,14 @@ def executar_nash(caminho_entrada, arquivo_saida):
     for idx, row in df_custas.iterrows():
         data = pd.to_datetime(row['Data Desembolso'], dayfirst=True)
         valor = float(row['Valor Histórico'])
-        fator = calcular_tjmg_juros(tabela_tjmg, data, data_calculo) 
-        df_custas.at[idx, 'Desc_Regra'] = "TJMG + Juros 1% a.m."
+        
+        # Aplicação do novo motor de custas
+        fator = calcular_custas_ipca_taxalegal(df_bcb, data, data_transito_c, teve_transito, data_calculo) 
+        
+        if teve_transito:
+            df_custas.at[idx, 'Desc_Regra'] = "IPCA + Taxa Legal (Juros do Trânsito)"
+        else:
+            df_custas.at[idx, 'Desc_Regra'] = "IPCA (Sem Juros)"
         
         valor_corr = valor * fator
         exigivel = 0.0 if jg else valor_corr
@@ -297,14 +339,12 @@ def executar_nash(caminho_entrada, arquivo_saida):
 
     subtotal = total_danos + total_custas
     
-    # CÁLCULO DOS HONORÁRIOS DA SENTENÇA
     if hon_fixo > 0:
         if pd.notna(data_sentenca_raw):
             data_sentenca = pd.to_datetime(data_sentenca_raw, dayfirst=True)
-            data_transito_h = pd.to_datetime(data_transito_raw, dayfirst=True) if teve_transito else None
             
-            valor_honorarios_calc = atualizar_honorarios_fixos(hon_fixo, data_sentenca, data_transito_h, tabela_tjmg, df_bcb, data_calculo)
-            str_transito = data_transito_h.strftime('%d/%m/%Y') if pd.notna(data_transito_h) else "Sem trânsito"
+            valor_honorarios_calc = atualizar_honorarios_fixos(hon_fixo, data_sentenca, data_transito_c, tabela_tjmg, df_bcb, data_calculo)
+            str_transito = data_transito_c.strftime('%d/%m/%Y') if teve_transito else "Sem trânsito"
             desc_hon = f"Honorários Fixos (CM desde {data_sentenca.strftime('%d/%m/%Y')} | Juros desde {str_transito}):"
         else:
             valor_honorarios_calc = hon_fixo
@@ -313,19 +353,14 @@ def executar_nash(caminho_entrada, arquivo_saida):
         valor_honorarios_calc = subtotal * hon_perc
         desc_hon = f"Honorários de Sucumbência ({hon_perc*100:g}%):"
 
-    # APLICANDO A REGRA DE JUSTIÇA GRATUITA (Fase de Conhecimento)
     if jg:
         desc_hon = desc_hon[:-1] + " [Inexigível - JG]:"
         
     valor_honorarios_exigivel = 0.0 if jg else valor_honorarios_calc
-
-    # A multa recai apenas sobre o que é de fato exigível
     base_multa = subtotal + valor_honorarios_exigivel
     
-    # APLICANDO REGRAS DA FASE DE CUMPRIMENTO DE SENTENÇA
     valor_multa = (base_multa * 0.10) if houve_inadimplemento else 0.0
     
-    # Se há JG, os honorários do 523 serão calculados como 0.0, mas a linha aparecerá formatada
     honorarios_523 = 0.0
     if houve_inadimplemento and not jg:
         honorarios_523 = (base_multa * 0.10)
@@ -333,7 +368,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
     total_geral = base_multa + valor_multa + honorarios_523
     
     gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, valor_honorarios_exigivel, desc_hon, valor_multa, honorarios_523, total_geral, arquivo_saida, houve_inadimplemento)
-
 
 # --- 5. GERAÇÃO DO LAUDO FORMATADO ---
 def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, desc_hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento):
@@ -496,7 +530,8 @@ class NashGUI:
             ("R3", "TJMG + Juros 1% a.m. até 08/2024; após, Taxa Selic"),
             ("R4", "TJMG + Juros 1% a.m. até 08/2024; após, Lei 14.905/24"),
             ("R5", "Selic até 08/2024; após, Lei 14.905/24"),
-            ("R6", "Lei 14.905/24: IPCA + Taxa Legal (critério único)")
+            ("R6", "Lei 14.905/24: IPCA + Taxa Legal (critério único)"),
+            ("Custas", "Padrão automático (IPCA + Taxa Legal)")
         ]
         for regra, desc in regras:
             linha = tk.Frame(frame_regras)
