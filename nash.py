@@ -8,7 +8,7 @@ import threading
 import sys
 import os
 
-__version__ = "2.3.3" # Refinamento lógico definitivo para Parâmetros e Justiça Gratuita
+__version__ = "2.3.5" # Exibição transparente de honorários zerados/inexigíveis sob Justiça Gratuita
 
 # --- 1. CONFIGURAÇÕES BASE ---
 if getattr(sys, 'frozen', False):
@@ -211,7 +211,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
     
     jg = str(df_param.loc['Justiça Gratuita', 1]).strip().upper() == 'SIM'
     
-    # TRATAMENTO DO PAGAMENTO VOLUNTÁRIO
+    # TRATAMENTO DO PAGAMENTO VOLUNTÁRIO (Lógica corrigida)
     pag_voluntario_str = ""
     try:
         val_pv = df_param.loc['Pagamento Voluntário 15d', 1]
@@ -219,7 +219,8 @@ def executar_nash(caminho_entrada, arquivo_saida):
             pag_voluntario_str = str(val_pv).strip().upper()
     except KeyError: pass
     
-    houve_inadimplemento = (pag_voluntario_str == 'SIM')
+    # Se o preenchimento for 'NÃO' ou 'NAO', significa que houve INADIMPLEMENTO
+    houve_inadimplemento = (pag_voluntario_str in ['NÃO', 'NAO'])
     
     hon_perc = 0.0
     try:
@@ -240,8 +241,12 @@ def executar_nash(caminho_entrada, arquivo_saida):
         data_sentenca_raw = df_param.loc['Data da Sentença', 1]
     except KeyError: pass
 
+    # Lendo as abas e blindando contra "linhas fantasmas" geradas pelo Excel/LibreOffice
     df_danos = pd.read_excel(caminho_entrada, sheet_name='Danos')
+    df_danos = df_danos.dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
+
     df_custas = pd.read_excel(caminho_entrada, sheet_name='Custas')
+    df_custas = df_custas.dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
     
     data_calculo = pd.Timestamp.today()
     total_danos = 0.0
@@ -292,36 +297,46 @@ def executar_nash(caminho_entrada, arquivo_saida):
 
     subtotal = total_danos + total_custas
     
+    # CÁLCULO DOS HONORÁRIOS DA SENTENÇA
     if hon_fixo > 0:
         if pd.notna(data_sentenca_raw):
             data_sentenca = pd.to_datetime(data_sentenca_raw, dayfirst=True)
             data_transito_h = pd.to_datetime(data_transito_raw, dayfirst=True) if teve_transito else None
             
-            valor_honorarios = atualizar_honorarios_fixos(hon_fixo, data_sentenca, data_transito_h, tabela_tjmg, df_bcb, data_calculo)
+            valor_honorarios_calc = atualizar_honorarios_fixos(hon_fixo, data_sentenca, data_transito_h, tabela_tjmg, df_bcb, data_calculo)
             str_transito = data_transito_h.strftime('%d/%m/%Y') if pd.notna(data_transito_h) else "Sem trânsito"
             desc_hon = f"Honorários Fixos (CM desde {data_sentenca.strftime('%d/%m/%Y')} | Juros desde {str_transito}):"
         else:
-            valor_honorarios = hon_fixo
+            valor_honorarios_calc = hon_fixo
             desc_hon = "Honorários Fixos (Sem Atualização - Falta 'Data da Sentença'):"
     else:
-        valor_honorarios = subtotal * hon_perc
+        valor_honorarios_calc = subtotal * hon_perc
         desc_hon = f"Honorários de Sucumbência ({hon_perc*100:g}%):"
 
-    base_multa = subtotal + valor_honorarios
+    # APLICANDO A REGRA DE JUSTIÇA GRATUITA (Fase de Conhecimento)
+    if jg:
+        desc_hon = desc_hon[:-1] + " [Inexigível - JG]:"
+        
+    valor_honorarios_exigivel = 0.0 if jg else valor_honorarios_calc
+
+    # A multa recai apenas sobre o que é de fato exigível
+    base_multa = subtotal + valor_honorarios_exigivel
     
-    # APLICANDO RIGORosamente AS REGRAS DE CUMPRIMENTO DE SENTENÇA:
-    # 1. Multa de 10%: só entra se houve inadimplemento pós-intimação (SIM).
+    # APLICANDO REGRAS DA FASE DE CUMPRIMENTO DE SENTENÇA
     valor_multa = (base_multa * 0.10) if houve_inadimplemento else 0.0
     
-    # 2. Honorários do 523 (10%): só entram se houve inadimplemento (SIM) E O RÉU NÃO TEM JUSTIÇA GRATUITA.
-    # Como a JG na sua planilha está como "Não", caso estivesse em "SIM", os honorários do 523 cairiam para zero.
-    honorarios_523 = (base_multa * 0.10) if (houve_inadimplemento and not jg) else 0.0
+    # Se há JG, os honorários do 523 serão calculados como 0.0, mas a linha aparecerá formatada
+    honorarios_523 = 0.0
+    if houve_inadimplemento and not jg:
+        honorarios_523 = (base_multa * 0.10)
     
     total_geral = base_multa + valor_multa + honorarios_523
-    gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, valor_honorarios, desc_hon, valor_multa, honorarios_523, total_geral, arquivo_saida)
+    
+    gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, valor_honorarios_exigivel, desc_hon, valor_multa, honorarios_523, total_geral, arquivo_saida, houve_inadimplemento)
+
 
 # --- 5. GERAÇÃO DO LAUDO FORMATADO ---
-def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, desc_hon, multa, hon_523, total, arquivo_saida):
+def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, desc_hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento):
     wb = Workbook()
     ws = wb.active
     ws.title = "Laudo de Liquidação"
@@ -437,10 +452,14 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     add_total("SUBTOTAL (Principal + Custas):", subtotal, True)
     add_total(desc_hon, hon)
     
-    if multa > 0:
+    if houve_inadimplemento:
         add_total("Multa Art. 523 CPC (10%):", multa)
-    if hon_523 > 0:
-        add_total("Honorários Fase Cumprimento Art. 523 CPC (10%):", hon_523)
+        
+        desc_523 = "Honorários Fase Cumprimento Art. 523 CPC (10%):"
+        if jg:
+            desc_523 = "Honorários Fase Cumprimento Art. 523 CPC (10%) [Inexigível - JG]:"
+        
+        add_total(desc_523, hon_523)
         
     add_total("TOTAL GERAL DEVIDO:", total, True, True)
 
