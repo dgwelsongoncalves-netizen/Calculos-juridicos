@@ -8,7 +8,7 @@ import threading
 import sys
 import os
 
-__version__ = "2.3.6" # Nova regra de Custas: IPCA + Taxa Legal (Juros a partir do trânsito)
+__version__ = "2.3.7" # Suporte multi-formato (ODS/XLS/XLSX) e Validação amigável de abas
 
 # --- 1. CONFIGURAÇÕES BASE ---
 if getattr(sys, 'frozen', False):
@@ -173,7 +173,6 @@ def calcular_custas_ipca_taxalegal(df_bcb, data_desembolso, data_transito, teve_
         transito_mes = pd.to_datetime(f"{data_transito.year}-{data_transito.month:02d}-01")
         corte_juros = pd.to_datetime("2024-08-01")
 
-        # Se trânsito ocorreu antes da Lei 14.905 (08/2024), aplica 1% a.m. até o corte
         if transito_mes < corte_juros:
             meses_1pct = (corte_juros.year - transito_mes.year) * 12 + (corte_juros.month - transito_mes.month)
             juros_fase1 = max(0, meses_1pct) * 0.01
@@ -182,7 +181,6 @@ def calcular_custas_ipca_taxalegal(df_bcb, data_desembolso, data_transito, teve_
             juros_fase1 = 0.0
             inicio_fase2 = transito_mes
 
-        # A partir do corte ou do trânsito (o que for posterior), aplica Taxa Legal
         if data_calc_mes > corte_juros:
             mask_tl = (df_tl.index > inicio_fase2) & (df_tl.index <= data_calc_mes)
             juros_fase2 = df_tl.loc[mask_tl, 'TAXA_LEGAL'].sum()
@@ -241,7 +239,27 @@ def executar_nash(caminho_entrada, arquivo_saida):
     tabela_tjmg = carregar_tjmg()
     df_bcb = carregar_taxas_bcb()
     
-    df_param = pd.read_excel(caminho_entrada, sheet_name='Parametros', header=None, index_col=0)
+    # -------------------------------------------------------------
+    # BLINDAGEM DE FORMATOS E ABAS: Leitura única na memória
+    # -------------------------------------------------------------
+    try:
+        xls = pd.ExcelFile(caminho_entrada)
+    except Exception as e:
+        raise Exception(f"Não foi possível abrir o arquivo.\nFormato inválido ou arquivo corrompido.\n\nDetalhe Técnico: {e}")
+
+    abas_esperadas = ['Parametros', 'Danos', 'Custas']
+    abas_faltantes = [aba for aba in abas_esperadas if aba not in xls.sheet_names]
+    
+    if abas_faltantes:
+        raise Exception(
+            f"O arquivo selecionado NÃO é o template correto do Nash System.\n\n"
+            f"Faltam as seguintes abas: {', '.join(abas_faltantes)}.\n\n"
+            f"DICA: Verifique se você não abriu uma planilha vazia, um arquivo CSV puro "
+            f"ou se alguém apagou abas acidentalmente."
+        )
+
+    # A partir daqui o arquivo é validado e seguro
+    df_param = pd.read_excel(xls, sheet_name='Parametros', header=None, index_col=0)
     processo = str(df_param.loc['Processo', 1])
     
     data_transito_raw = df_param.loc['Data do Trânsito', 1]
@@ -278,10 +296,11 @@ def executar_nash(caminho_entrada, arquivo_saida):
         data_sentenca_raw = df_param.loc['Data da Sentença', 1]
     except KeyError: pass
 
-    df_danos = pd.read_excel(caminho_entrada, sheet_name='Danos')
+    # Lendo abas validadas direto do objeto 'xls' na memória (mais rápido e seguro)
+    df_danos = pd.read_excel(xls, sheet_name='Danos')
     df_danos = df_danos.dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
 
-    df_custas = pd.read_excel(caminho_entrada, sheet_name='Custas')
+    df_custas = pd.read_excel(xls, sheet_name='Custas')
     df_custas = df_custas.dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
     
     data_calculo = pd.Timestamp.today()
@@ -323,7 +342,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
         data = pd.to_datetime(row['Data Desembolso'], dayfirst=True)
         valor = float(row['Valor Histórico'])
         
-        # Aplicação do novo motor de custas
         fator = calcular_custas_ipca_taxalegal(df_bcb, data, data_transito_c, teve_transito, data_calculo) 
         
         if teve_transito:
@@ -367,6 +385,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
     
     total_geral = base_multa + valor_multa + honorarios_523
     
+    # Atualiza o arquivo final mas salvando forçadamente em formato XLSX moderno
     gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, valor_honorarios_exigivel, desc_hon, valor_multa, honorarios_523, total_geral, arquivo_saida, houve_inadimplemento)
 
 # --- 5. GERAÇÃO DO LAUDO FORMATADO ---
@@ -503,7 +522,13 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     ws.column_dimensions['D'].width = 16
     ws.column_dimensions['E'].width = 54 
     ws.column_dimensions['F'].width = 20
-    wb.save(arquivo_saida)
+    
+    # Salva sempre como XLSX final garantindo retrocompatibilidade
+    nome_saida = str(arquivo_saida)
+    if nome_saida.endswith('.ods') or nome_saida.endswith('.xls'):
+        nome_saida = nome_saida.rsplit('.', 1)[0] + '.xlsx'
+    
+    wb.save(nome_saida)
 
 # --- 6. INTERFACE GRÁFICA (Dr. Nash) ---
 class NashGUI:
@@ -546,11 +571,17 @@ class NashGUI:
         self.btn_processar.pack()
 
     def iniciar_processo(self):
-        caminho = filedialog.askopenfilename(title="Selecione a Planilha do Cliente", filetypes=[("Planilhas Excel", "*.xlsx")])
+        caminho = filedialog.askopenfilename(
+            title="Selecione a Planilha do Cliente", 
+            filetypes=[
+                ("Planilhas (Excel/LibreOffice)", "*.xlsx *.xls *.ods"),
+                ("Todos os Arquivos", "*.*")
+            ]
+        )
         if not caminho: return
         caminho_entrada = Path(caminho)
         arquivo_saida = caminho_entrada.parent / f"Laudo_{caminho_entrada.name}"
-        self.lbl_status.config(text="Conectando ao Banco Central e calculando...", fg="blue")
+        self.lbl_status.config(text="Validando planilha e calculando...", fg="blue")
         self.btn_processar.config(state="disabled")
         self.root.update()
         threading.Thread(target=self.processar_em_background, args=(caminho_entrada, arquivo_saida)).start()
@@ -559,7 +590,7 @@ class NashGUI:
         try:
             executar_nash(caminho_entrada, arquivo_saida)
             def sucesso():
-                self.lbl_status.config(text=f"Concluído! Salvo em:\n{arquivo_saida.name}", fg="green")
+                self.lbl_status.config(text=f"Concluído! Laudo gerado com sucesso.", fg="green")
                 self.btn_processar.config(state="normal")
                 messagebox.showinfo("Sucesso", "Liquidação calculada e laudo gerado com sucesso!")
             self.root.after(0, sucesso)
@@ -568,7 +599,7 @@ class NashGUI:
             def erro():
                 self.lbl_status.config(text="Erro durante o cálculo.", fg="red")
                 self.btn_processar.config(state="normal")
-                messagebox.showerror("Erro de Execução", erro_msg) 
+                messagebox.showerror("Atenção - Erro na Planilha", erro_msg) 
             self.root.after(0, erro)
 
 if __name__ == "__main__":
