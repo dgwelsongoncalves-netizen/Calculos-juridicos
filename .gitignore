@@ -19,3 +19,6 @@ Processos_Entrada/*
 # Exceção: Manter arquivos de documentação nas pastas para não subirem vazias
 !Processos_Arquivados/.gitkeep
 !Processos_Calculados/.gitkeep
+
+# Ignorar arquivos de log locais do sistema
+*.log

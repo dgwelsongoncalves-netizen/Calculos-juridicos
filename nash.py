@@ -7,8 +7,10 @@ from tkinter import filedialog, messagebox
 import threading
 import sys
 import os
+import logging
+import traceback
 
-__version__ = "2.5.0" # Motor de Amortização em Escada (Conta Gráfica - Art. 354 CC) + Anti-Sobrescrita
+__version__ = "2.5.1" # Motor de Conta Gráfica + Logging e Tratamento de Erros
 
 # --- 1. CONFIGURAÇÕES BASE ---
 if getattr(sys, 'frozen', False):
@@ -20,6 +22,17 @@ else:
 
 PASTA_TABELAS = PASTA_APP / 'Tabelas_Oficiais'
 ARQUIVO_TJMG = PASTA_TABELAS / 'tabela_tjmg.xlsx'
+
+# --- CONFIGURAÇÃO DO LOG ---
+ARQUIVO_LOG = PASTA_APP / "nash_system.log"
+logging.basicConfig(
+    filename=ARQUIVO_LOG,
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%d/%m/%Y %H:%M:%S",
+    encoding="utf-8"
+)
+logging.info(f"--- Nash System v{__version__} Iniciado ---")
 
 # --- 2. CARREGAMENTO DE DADOS ---
 def carregar_tjmg():
@@ -161,7 +174,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
     xls = pd.ExcelFile(caminho_entrada)
     abas_esperadas = ['Parametros', 'Danos', 'Custas']
     if not all(aba in xls.sheet_names for aba in abas_esperadas):
-        raise Exception("Arquivo inválido. Verifique as abas obrigatórias (Parametros, Danos, Custas).")
+        raise Exception("Arquivo inválido. Verifique se o arquivo possui as abas obrigatórias: 'Parametros', 'Danos' e 'Custas'.")
 
     df_param = pd.read_excel(xls, sheet_name='Parametros', header=None, index_col=0)
     
@@ -189,9 +202,15 @@ def executar_nash(caminho_entrada, arquivo_saida):
     data_evento = get_param('Data do Evento', is_date=True)
 
     df_danos = pd.read_excel(xls, sheet_name='Danos').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
+    df_danos['Data Desembolso'] = pd.to_datetime(df_danos['Data Desembolso'], format='mixed', dayfirst=True, errors='coerce')
+    if df_danos['Data Desembolso'].isna().any():
+        raise ValueError("Data inválida ou texto não reconhecido na aba 'Danos'. Verifique se não há células formatadas como Número (ex: 44966) ou datas incompletas.")
+
     df_custas = pd.read_excel(xls, sheet_name='Custas').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
+    df_custas['Data Desembolso'] = pd.to_datetime(df_custas['Data Desembolso'], format='mixed', dayfirst=True, errors='coerce')
+    if df_custas['Data Desembolso'].isna().any():
+        raise ValueError("Data inválida ou texto não reconhecido na aba 'Custas'. Verifique se não há células formatadas como Número (ex: 44966) ou datas incompletas.")
     
-    # Restaura o texto da coluna "Índice Aplicado"
     for idx, row in df_danos.iterrows():
         regra_txt = str(row.get('Regra', '')).strip().upper()
         if regra_txt == 'R1': df_danos.at[idx, 'Desc_Regra'] = "TJMG + Juros 1% a.m."
@@ -205,19 +224,22 @@ def executar_nash(caminho_entrada, arquivo_saida):
     for idx, row in df_custas.iterrows():
         df_custas.at[idx, 'Desc_Regra'] = "IPCA + Taxa Legal (Juros do Trânsito)" if teve_transito else "IPCA (Sem Juros)"
 
-    # Carregando Deduções com a coluna atualizada
     try:
         df_deducoes = pd.read_excel(xls, sheet_name='Deducoes').dropna(subset=['Data bloqueio/deposito', 'Valor'], how='any')
-        df_deducoes['Data bloqueio/deposito'] = pd.to_datetime(df_deducoes['Data bloqueio/deposito'], dayfirst=True)
+        df_deducoes['Data bloqueio/deposito'] = pd.to_datetime(df_deducoes['Data bloqueio/deposito'], format='mixed', dayfirst=True, errors='coerce')
+        if df_deducoes['Data bloqueio/deposito'].isna().any():
+             raise ValueError("Data inválida ou texto não reconhecido na aba 'Deducoes'. Verifique se não há células formatadas como Número (ex: 44966).")
         df_deducoes = df_deducoes.sort_values('Data bloqueio/deposito')
         tem_deducao = not df_deducoes.empty
-    except:
+    except Exception as e:
+        if isinstance(e, ValueError) and "Data inválida" in str(e):
+            raise e
         tem_deducao = False
         df_deducoes = pd.DataFrame()
 
     data_calculo = pd.Timestamp.today()
     
-    # MODO 1: SEM DEDUÇÕES (Atualiza tudo para Hoje)
+    # MODO 1: SEM DEDUÇÕES
     if not tem_deducao:
         total_princ_danos = 0.0
         total_juros_danos = 0.0
@@ -387,7 +409,6 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
 
     linha = 8
     
-    # 1. TABELA DE DANOS
     ws.merge_cells(f'A{linha}:F{linha}')
     ws[f'A{linha}'] = "1. DANOS MATERIAIS / NOTAS"
     ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
@@ -409,7 +430,6 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
 
     linha += 1
 
-    # 2. TABELA DE CUSTAS
     ws.merge_cells(f'A{linha}:F{linha}')
     ws[f'A{linha}'] = "2. CUSTAS E DESPESAS PROCESSUAIS"
     ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
@@ -432,7 +452,6 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
 
     linha += 2
 
-    # 3. TABELA FINAL (Conta Gráfica ou Resumo)
     if historico:
         ws.merge_cells(f'A{linha}:F{linha}')
         ws[f'A{linha}'] = "3. EVOLUÇÃO DA DÍVIDA (AMORTIZAÇÃO CONTA GRÁFICA - Art. 354 CC)"
@@ -480,7 +499,6 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     nome_saida = str(arquivo_saida)
     if nome_saida.endswith(('.ods', '.xls')): nome_saida = nome_saida.rsplit('.', 1)[0] + '.xlsx'
     
-    # --- NOVO: Lógica anti-sobrescrita de arquivos ---
     path_final = Path(nome_saida)
     if path_final.exists():
         pasta = path_final.parent
@@ -544,18 +562,26 @@ class NashGUI:
         threading.Thread(target=self.processar_em_background, args=(caminho_entrada, arquivo_saida)).start()
 
     def processar_em_background(self, caminho_entrada, arquivo_saida):
+        logging.info(f"Iniciando cálculo para: {caminho_entrada.name}")
         try:
             executar_nash(caminho_entrada, arquivo_saida)
             def sucesso():
                 self.lbl_status.config(text=f"Laudo gerado com sucesso.", fg="green")
                 self.btn_processar.config(state="normal")
+                logging.info(f"Cálculo concluído com sucesso. Salvo como: {arquivo_saida.name}")
                 messagebox.showinfo("Sucesso", "Cálculo processado!")
             self.root.after(0, sucesso)
         except Exception as e:
+            tb_str = traceback.format_exc()
+            logging.error(f"Erro ao processar {caminho_entrada.name}:\n{tb_str}")
+            
+            erro_msg = str(e)
+            
             def erro():
-                self.lbl_status.config(text="Erro durante o cálculo.", fg="red")
+                self.lbl_status.config(text="Erro crítico (Veja o log).", fg="red")
                 self.btn_processar.config(state="normal")
-                messagebox.showerror("Atenção - Erro", str(e)) 
+                mensagem = f"O cálculo foi interrompido pelo seguinte erro:\n\n{erro_msg}\n\nUm registro detalhado foi salvo no arquivo 'nash_system.log' na pasta do programa."
+                messagebox.showerror("Atenção - Erro no Processamento", mensagem) 
             self.root.after(0, erro)
 
 if __name__ == "__main__":
