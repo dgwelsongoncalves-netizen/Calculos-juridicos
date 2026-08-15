@@ -7,6 +7,9 @@ __pycache__/
 ~$*.xlsx
 .lock.*
 
+#Ignorar .env (onde estão as chaves da API do Google)
+.env
+
 # Proteger Dados de Clientes: Ignorar o conteúdo das pastas de processos
 Processos_Arquivados/*
 Processos_Calculados/*
