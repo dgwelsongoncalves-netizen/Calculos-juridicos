@@ -10,7 +10,7 @@ import os
 import logging
 import traceback
 
-__version__ = "2.6.2" # Fazenda + Escada + BCB Data Dinâmica e Tratamento de Tipos
+__version__ = "2.6.3" # Auditoria: Fazenda Termo Juros + Alerta Excesso + Validação TJMG + Timeline Conta Gráfica
 
 # --- 1. CONFIGURAÇÕES BASE ---
 if getattr(sys, 'frozen', False):
@@ -53,9 +53,7 @@ def carregar_tjmg():
 def carregar_taxas_bcb(data_minima):
     try:
         from bcb import sgs
-        import pandas as pd
         
-        # Converte a data mínima do processo para garantir segurança e performance
         if pd.isna(data_minima):
             str_data_inicio = '2010-01-01' 
         else:
@@ -63,7 +61,6 @@ def carregar_taxas_bcb(data_minima):
             
         logging.info(f"Baixando taxas do BCB a partir de: {str_data_inicio}")
 
-        # O '.apply(pd.to_numeric, errors='coerce').fillna(0)' blinda qualquer lixo de texto que o BCB mande
         df_selic = sgs.get({'SELIC': 4390}, start=str_data_inicio)
         df_selic = df_selic.apply(pd.to_numeric, errors='coerce').fillna(0) / 100.0
         df_selic.index = df_selic.index.to_period('M').to_timestamp()
@@ -81,10 +78,10 @@ def carregar_taxas_bcb(data_minima):
         df_ipca_e = df_ipca_e.apply(pd.to_numeric, errors='coerce').fillna(0) / 100.0
         df_ipca_e.index = df_ipca_e.index.to_period('M').to_timestamp()
 
-       # Tratamento da Poupança: Pega apenas o 1º dia útil do mês para evitar soma de 30 dias de juros
         df_poup = sgs.get({'POUPANCA': 195}, start=str_data_inicio)
         df_poup = df_poup.resample('MS').first() 
         df_poupanca = df_poup.apply(pd.to_numeric, errors='coerce').fillna(0) / 100.0
+        df_poupanca.index = df_poupanca.index.to_period('M').to_timestamp()
         
         return {
             'SELIC': df_selic, 
@@ -100,6 +97,11 @@ def obter_fator_tjmg(df_tjmg, data_inicio, data_fim):
     if df_tjmg is None: return 1.0
     d_ini = pd.to_datetime(f"{data_inicio.year}-{data_inicio.month:02d}-01")
     d_fim = pd.to_datetime(f"{data_fim.year}-{data_fim.month:02d}-01")
+    
+    ultimo_mes_tabela = df_tjmg.index[-1]
+    if d_fim > ultimo_mes_tabela + pd.DateOffset(months=2):
+        raise ValueError(f"A Tabela TJMG está defasada! O cálculo atual exige a competência de {d_fim.strftime('%m/%Y')}, mas o arquivo 'tabela_tjmg.xlsx' disponível na pasta só vai até {ultimo_mes_tabela.strftime('%m/%Y')}. Atualize a tabela para evitar prejuízos no cálculo.")
+
     try:
         idx_ini = float(df_tjmg.loc[d_ini, 'ÍNDICE'])
     except KeyError:
@@ -179,9 +181,9 @@ def calc_tjmg_leinova(df_tjmg, df_bcb, data_cm, data_juros, data_calculo):
 
 def calc_fazenda_publica(df_bcb, data_cm, data_juros, data_calculo):
     """
-    Motor matemático exclusivo para Fazenda Pública.
-    Até 30/11/2021: IPCA-E (Correção) + Juros da Poupança (Art. 1º-F)
-    A partir de 01/12/2021: Exclusivamente Taxa Selic (EC 113/2021)
+    Motor Fazenda Pública (Restrito a Responsabilidade Civil/Não-Tributário).
+    Até 30/11/2021: IPCA-E + Poupança (Tema 810 STF)
+    A partir de 01/12/2021: Taxa Selic Pura segmentada (EC 113/2021)
     """
     if df_bcb is None: return 1.0, 0.0
     
@@ -208,24 +210,35 @@ def calc_fazenda_publica(df_bcb, data_cm, data_juros, data_calculo):
             mask_poup = (df_poupanca.index >= data_juros_mes) & (df_poupanca.index < fim_fase1)
             juros_fase1 = df_poupanca.loc[mask_poup, 'POUPANCA'].sum()
 
-    # FASE 2: Após a EC 113/2021 (Selic Pura)
+    # FASE 2: Após a EC 113/2021 (Selic Pura Segmentada)
     data_calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
     fator_cm_fase2 = 1.0
-    juros_fase2 = 0.0
     
     if data_calc_mes >= mes_corte_ec113:
         inicio_fase2 = max(mes_corte_ec113, pd.to_datetime(f"{data_cm.year}-{data_cm.month:02d}-01"))
-        mask_selic = (df_selic.index >= inicio_fase2) & (df_selic.index <= data_calc_mes)
         
-        fator_selic = (1 + df_selic.loc[mask_selic, 'SELIC']).prod()
-        
-        fator_cm_fase2 = fator_selic
-        juros_fase2 = 0.0
+        if pd.isna(data_juros) or data_juros <= mes_corte_ec113:
+            # Mora já consolidada: aplica Selic direta
+            mask_selic = (df_selic.index >= inicio_fase2) & (df_selic.index <= data_calc_mes)
+            fator_cm_fase2 = (1 + df_selic.loc[mask_selic, 'SELIC']).prod()
+        else:
+            # Evento/Citação ocorreu durante a fase Selic. 
+            data_juros_mes = pd.to_datetime(f"{data_juros.year}-{data_juros.month:02d}-01")
+            
+            # 1. Correção pura por IPCA-E até o início dos juros
+            if inicio_fase2 < data_juros_mes:
+                mask_ipca_e_f2 = (df_ipca_e.index >= inicio_fase2) & (df_ipca_e.index < data_juros_mes)
+                fator_cm_fase2 = (1 + df_ipca_e.loc[mask_ipca_e_f2, 'IPCA_E']).prod()
+            
+            # 2. Selic (Juros+Correção) a partir da mora
+            inicio_selic = max(inicio_fase2, data_juros_mes)
+            mask_selic = (df_selic.index >= inicio_selic) & (df_selic.index <= data_calc_mes)
+            fator_selic = (1 + df_selic.loc[mask_selic, 'SELIC']).prod()
+            
+            fator_cm_fase2 = fator_cm_fase2 * fator_selic
 
     fator_cm_final = fator_cm_fase1 * fator_cm_fase2
-    juros_final = juros_fase1
-    
-    return fator_cm_final, juros_final
+    return fator_cm_final, juros_fase1
 
 def calc_leinova_pura(df_bcb, data_cm, data_juros, data_calculo):
     if df_bcb is None: return 1.0, 0.0
@@ -287,15 +300,10 @@ def executar_nash(caminho_entrada, arquivo_saida):
 
     df_danos = pd.read_excel(xls, sheet_name='Danos').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
     df_danos['Data Desembolso'] = pd.to_datetime(df_danos['Data Desembolso'], format='mixed', dayfirst=True, errors='coerce')
-    if df_danos['Data Desembolso'].isna().any():
-        raise ValueError("Data inválida ou texto não reconhecido na aba 'Danos'. Verifique se não há células formatadas como Número (ex: 44966) ou datas incompletas.")
-
+    
     df_custas = pd.read_excel(xls, sheet_name='Custas').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
     df_custas['Data Desembolso'] = pd.to_datetime(df_custas['Data Desembolso'], format='mixed', dayfirst=True, errors='coerce')
-    if df_custas['Data Desembolso'].isna().any():
-        raise ValueError("Data inválida ou texto não reconhecido na aba 'Custas'. Verifique se não há células formatadas como Número (ex: 44966) ou datas incompletas.")
     
-    # Identifica a data mais antiga para busca inteligente
     todas_as_datas = pd.Series(dtype='datetime64[ns]')
     if not df_danos.empty: todas_as_datas = pd.concat([todas_as_datas, df_danos['Data Desembolso']])
     if not df_custas.empty: todas_as_datas = pd.concat([todas_as_datas, df_custas['Data Desembolso']])
@@ -322,13 +330,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
     try:
         df_deducoes = pd.read_excel(xls, sheet_name='Deducoes').dropna(subset=['Data bloqueio/deposito', 'Valor'], how='any')
         df_deducoes['Data bloqueio/deposito'] = pd.to_datetime(df_deducoes['Data bloqueio/deposito'], format='mixed', dayfirst=True, errors='coerce')
-        if df_deducoes['Data bloqueio/deposito'].isna().any():
-             raise ValueError("Data inválida ou texto não reconhecido na aba 'Deducoes'. Verifique se não há células formatadas como Número (ex: 44966).")
         df_deducoes = df_deducoes.sort_values('Data bloqueio/deposito')
         tem_deducao = not df_deducoes.empty
-    except Exception as e:
-        if isinstance(e, ValueError) and "Data inválida" in str(e):
-            raise e
+    except Exception:
         tem_deducao = False
         df_deducoes = pd.DataFrame()
 
@@ -411,6 +415,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         
         data_corte = df_deducoes.iloc[0]['Data bloqueio/deposito']
         
+        # Processa apenas o que ocorreu até o 1º bloqueio
         for _, row in df_danos.iterrows():
             data_cm = pd.to_datetime(row['Data Desembolso'], dayfirst=True)
             if data_cm > data_corte: continue
@@ -438,10 +443,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
             saldo_principal += val_princ
             saldo_juros += val_princ * f_jur
             
-        # Passo 1: Lançar Subtotal Base
         historico_conta_grafica.append((data_corte, "Subtotal (Principal + Juros)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
         
-        # Passo 2: Honorários de Sucumbência
+        # Honorários / Multas na consolidação
         hon_suc_princ = 0.0
         hon_suc_jur = 0.0
         if hon_fixo > 0 and pd.notna(data_sentenca) and not jg:
@@ -459,7 +463,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
             saldo_juros += hon_suc_jur
             historico_conta_grafica.append((data_corte, "(+) Honorários Sucumbenciais", hon_suc_princ, hon_suc_jur, 0.0, saldo_principal+saldo_juros))
             
-        # Passo 3: Multa e Honorários Art. 523
         if houve_inadimplemento:
             base_multa = saldo_principal + saldo_juros
             multa_523 = base_multa * 0.10
@@ -471,7 +474,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
                 saldo_principal += hon_523
                 historico_conta_grafica.append((data_corte, "(+) Honorários Art. 523 CPC (10%)", hon_523, 0.0, 0.0, saldo_principal+saldo_juros))
                 
-        # Passo 4: Fechamento Pré-Bloqueio
         historico_conta_grafica.append((data_corte, "DÍVIDA CONSOLIDADA (Pré-Bloqueio)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
         
         ultima_data = data_corte
@@ -479,6 +481,19 @@ def executar_nash(caminho_entrada, arquivo_saida):
             data_ded = pd.to_datetime(row['Data bloqueio/deposito'])
             valor_ded = float(row['Valor'])
             
+            # Auditoria 3: Injeção de despesas posteriores ao corte antes de debitar o bloqueio
+            despesas_tardias = df_danos[(df_danos['Data Desembolso'] > ultima_data) & (df_danos['Data Desembolso'] <= data_ded)]
+            for _, nd in despesas_tardias.iterrows():
+                d_dano = pd.to_datetime(nd['Data Desembolso'])
+                if is_fazenda: f_cm, f_jur = calc_fazenda_publica(df_bcb, ultima_data, ultima_data, d_dano)
+                else: f_cm, f_jur = calc_leinova_pura(df_bcb, ultima_data, ultima_data, d_dano) 
+                saldo_principal = saldo_principal * f_cm
+                saldo_juros += saldo_principal * f_jur
+                v_add = float(nd['Valor Histórico'])
+                saldo_principal += v_add
+                historico_conta_grafica.append((d_dano, f"(+) Nova Inclusão: {nd['Descrição']}", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
+                ultima_data = d_dano
+
             if data_ded > ultima_data:
                 if is_fazenda: f_cm, f_jur = calc_fazenda_publica(df_bcb, ultima_data, ultima_data, data_ded)
                 else: f_cm, f_jur = calc_leinova_pura(df_bcb, ultima_data, ultima_data, data_ded) 
@@ -490,9 +505,30 @@ def executar_nash(caminho_entrada, arquivo_saida):
             abate_juros = min(valor_ded, saldo_juros)
             saldo_juros -= abate_juros
             abate_princ = valor_ded - abate_juros
-            saldo_principal = max(0, saldo_principal - abate_princ)
-            historico_conta_grafica.append((data_ded, "(-) Bloqueio Judicial", saldo_principal, saldo_juros, valor_ded, saldo_principal+saldo_juros))
+            
+            # Auditoria 4: Restituição de Excedente de Bloqueio
+            if abate_princ > saldo_principal:
+                excesso = abate_princ - saldo_principal
+                saldo_principal = 0.0
+                historico_conta_grafica.append((data_ded, "(-) Bloqueio Judicial", 0.0, saldo_juros, valor_ded, 0.0))
+                historico_conta_grafica.append((data_ded, "(!) EXCESSO DE EXECUÇÃO / RESTITUIR", 0.0, 0.0, excesso, 0.0))
+            else:
+                saldo_principal -= abate_princ
+                historico_conta_grafica.append((data_ded, "(-) Bloqueio Judicial", saldo_principal, saldo_juros, valor_ded, saldo_principal+saldo_juros))
         
+        # Traz as últimas pendências até hoje
+        despesas_finais = df_danos[df_danos['Data Desembolso'] > ultima_data]
+        for _, nd in despesas_finais.iterrows():
+            d_dano = pd.to_datetime(nd['Data Desembolso'])
+            if is_fazenda: f_cm, f_jur = calc_fazenda_publica(df_bcb, ultima_data, ultima_data, d_dano)
+            else: f_cm, f_jur = calc_leinova_pura(df_bcb, ultima_data, ultima_data, d_dano) 
+            saldo_principal = saldo_principal * f_cm
+            saldo_juros += saldo_principal * f_jur
+            v_add = float(nd['Valor Histórico'])
+            saldo_principal += v_add
+            historico_conta_grafica.append((d_dano, f"(+) Nova Inclusão: {nd['Descrição']}", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
+            ultima_data = d_dano
+
         if ultima_data < data_calculo:
             if is_fazenda: f_cm, f_jur = calc_fazenda_publica(df_bcb, ultima_data, ultima_data, data_calculo)
             else: f_cm, f_jur = calc_leinova_pura(df_bcb, ultima_data, ultima_data, data_calculo)
@@ -586,7 +622,14 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         
         for data, evento, princ, jur, pago, saldo in historico:
             ws.cell(row=linha, column=1, value=data.strftime('%d/%m/%Y')).border = borda
-            ws.cell(row=linha, column=2, value=evento).border = borda; ws.cell(row=linha, column=2).font = f_negrito if "Bloqueio" in evento else f_normal
+            ws.cell(row=linha, column=2, value=evento).border = borda
+            if "Restituir" in str(evento).title():
+                ws.cell(row=linha, column=2).font = Font(name="Arial", size=11, bold=True, color="FF0000") # Destaque vermelho
+            elif "Bloqueio" in str(evento):
+                ws.cell(row=linha, column=2).font = f_negrito
+            else:
+                ws.cell(row=linha, column=2).font = f_normal
+                
             ws.cell(row=linha, column=3, value=princ).number_format = moeda; ws.cell(row=linha, column=3).border = borda
             ws.cell(row=linha, column=4, value=jur).number_format = moeda; ws.cell(row=linha, column=4).border = borda
             ws.cell(row=linha, column=5, value=pago if pago > 0 else "-").number_format = moeda if pago > 0 else 'General'; ws.cell(row=linha, column=5).border = borda
