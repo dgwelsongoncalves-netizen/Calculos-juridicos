@@ -10,7 +10,7 @@ import os
 import logging
 import traceback
 
-__version__ = "2.6.3" # Auditoria: Fazenda Termo Juros + Alerta Excesso + Validação TJMG + Timeline Conta Gráfica
+__version__ = "2.6.4" # Restaura validação de datas inválidas em Danos/Custas/Deducoes (removida por engano na v2.6.3)
 
 # --- 1. CONFIGURAÇÕES BASE ---
 if getattr(sys, 'frozen', False):
@@ -300,9 +300,13 @@ def executar_nash(caminho_entrada, arquivo_saida):
 
     df_danos = pd.read_excel(xls, sheet_name='Danos').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
     df_danos['Data Desembolso'] = pd.to_datetime(df_danos['Data Desembolso'], format='mixed', dayfirst=True, errors='coerce')
-    
+    if df_danos['Data Desembolso'].isna().any():
+        raise ValueError("Data inválida ou texto não reconhecido na aba 'Danos'. Verifique se não há células formatadas como Número (ex: 44966) ou datas incompletas.")
+
     df_custas = pd.read_excel(xls, sheet_name='Custas').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
     df_custas['Data Desembolso'] = pd.to_datetime(df_custas['Data Desembolso'], format='mixed', dayfirst=True, errors='coerce')
+    if df_custas['Data Desembolso'].isna().any():
+        raise ValueError("Data inválida ou texto não reconhecido na aba 'Custas'. Verifique se não há células formatadas como Número (ex: 44966) ou datas incompletas.")
     
     todas_as_datas = pd.Series(dtype='datetime64[ns]')
     if not df_danos.empty: todas_as_datas = pd.concat([todas_as_datas, df_danos['Data Desembolso']])
@@ -330,9 +334,13 @@ def executar_nash(caminho_entrada, arquivo_saida):
     try:
         df_deducoes = pd.read_excel(xls, sheet_name='Deducoes').dropna(subset=['Data bloqueio/deposito', 'Valor'], how='any')
         df_deducoes['Data bloqueio/deposito'] = pd.to_datetime(df_deducoes['Data bloqueio/deposito'], format='mixed', dayfirst=True, errors='coerce')
+        if df_deducoes['Data bloqueio/deposito'].isna().any():
+            raise ValueError("Data inválida ou texto não reconhecido na aba 'Deducoes'. Verifique se não há células formatadas como Número (ex: 44966).")
         df_deducoes = df_deducoes.sort_values('Data bloqueio/deposito')
         tem_deducao = not df_deducoes.empty
-    except Exception:
+    except Exception as e:
+        if isinstance(e, ValueError) and "Data inválida" in str(e):
+            raise e
         tem_deducao = False
         df_deducoes = pd.DataFrame()
 
