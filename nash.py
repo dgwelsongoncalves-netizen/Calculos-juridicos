@@ -12,7 +12,7 @@ import traceback
 import platform
 import subprocess
 
-__version__ = "2.8.2" # Ajuste: Layout em Paisagem (Landscape) para Laudo e Êxito, otimizando o espaço das colunas no PDF.
+__version__ = "2.8.4" # Add: Parâmetro de Atuação (Autor/Réu) e Desacoplamento Total de Marcos (Correção vs Juros por Verba)
 
 # --- 1. CONFIGURAÇÕES BASE ---
 if getattr(sys, 'frozen', False):
@@ -174,6 +174,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         except: return 1.0
 
     processo = str(get_param('Processo', 'N/A'))
+    atuacao = str(get_param('Atuação', 'RÉU')).strip().upper() # NOVO: AUTOR ou RÉU
     data_transito_c, teve_transito = get_param('Data do Trânsito', is_date=True), pd.notna(get_param('Data do Trânsito', is_date=True))
     data_sentenca = get_param('Data da Sentença', is_date=True)
     jg = str(get_param('Justiça Gratuita', '')).strip().upper() == 'SIM'
@@ -210,7 +211,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
         if is_fazenda: df_danos.at[idx, 'Desc_Regra'] = "Faz. Pub. (EC 113)"
         elif regra_txt == 'R1': df_danos.at[idx, 'Desc_Regra'] = "TJMG + Juros 1%"
         elif regra_txt == 'R2': df_danos.at[idx, 'Desc_Regra'] = "Taxa Selic"
+        elif regra_txt == 'R3': df_danos.at[idx, 'Desc_Regra'] = "TJMG + 1% até 08/24; após, Selic"
         elif regra_txt == 'R4': df_danos.at[idx, 'Desc_Regra'] = "TJMG + 1% até 08/24; após, Lei 14.905"
+        elif regra_txt == 'R5': df_danos.at[idx, 'Desc_Regra'] = "Selic até 08/24; após, Lei 14.905"
         elif regra_txt == 'R6': df_danos.at[idx, 'Desc_Regra'] = "Lei 14.905/24"
         else: df_danos.at[idx, 'Desc_Regra'] = regra_txt if regra_txt else "Selic"
         
@@ -230,7 +233,10 @@ def executar_nash(caminho_entrada, arquivo_saida):
         if pd.isna(data_cm): continue
         valor = float(row['Valor Histórico'])
         regra = str(row.get('Regra', '')).strip().upper()
-        data_juros = data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_cm
+        
+        # SUPORTE A MARCOS INDIVIDUAIS (CORREÇÃO VS JUROS SEPARADOS NA LINHA)
+        data_juros_base = data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_cm
+        data_juros = pd.to_datetime(row['Data Juros'], dayfirst=True, errors='coerce') if 'Data Juros' in row and pd.notna(row['Data Juros']) else data_juros_base
             
         if is_fazenda: f_cm, f_jur = calc_fazenda_publica(df_bcb, data_cm, data_juros, data_calculo)
         elif regra == 'R1': f_cm, f_jur = calc_tjmg_juros(tabela_tjmg, data_cm, data_juros, data_calculo)
@@ -244,16 +250,15 @@ def executar_nash(caminho_entrada, arquivo_saida):
         df_danos.at[idx, 'Fator CM'] = f_cm
         df_danos.at[idx, 'Fator Juros'] = f_jur
         
+        # CÁLCULO DE ÊXITO APENAS SE ESTIVERMOS PELA DEFESA/RÉU
         v_pedido = float(row['Valor Pedido Inicial'])
-        if v_pedido > 0 and pd.notna(row['Data do Pedido']):
+        if 'AUTOR' not in atuacao and v_pedido > 0 and pd.notna(row['Data do Pedido']):
             data_ped = row['Data do Pedido']
-            data_juros_ped = data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_ped
-            
-            if is_fazenda: f_cm_ped, f_jur_ped = calc_fazenda_publica(df_bcb, data_ped, data_juros_ped, data_calculo)
-            elif regra == 'R1': f_cm_ped, f_jur_ped = calc_tjmg_juros(tabela_tjmg, data_ped, data_juros_ped, data_calculo)
-            elif regra == 'R4': f_cm_ped, f_jur_ped = calc_tjmg_leinova(tabela_tjmg, df_bcb, data_ped, data_juros_ped, data_calculo)
-            elif regra == 'R6': f_cm_ped, f_jur_ped = calc_leinova_pura(df_bcb, data_ped, data_juros_ped, data_calculo)
-            else: f_cm_ped, f_jur_ped = calc_selic_pura(df_bcb, data_ped, data_juros_ped, data_calculo)
+            if is_fazenda: f_cm_ped, f_jur_ped = calc_fazenda_publica(df_bcb, data_ped, data_juros, data_calculo)
+            elif regra == 'R1': f_cm_ped, f_jur_ped = calc_tjmg_juros(tabela_tjmg, data_ped, data_juros, data_calculo)
+            elif regra == 'R4': f_cm_ped, f_jur_ped = calc_tjmg_leinova(tabela_tjmg, df_bcb, data_ped, data_juros, data_calculo)
+            elif regra == 'R6': f_cm_ped, f_jur_ped = calc_leinova_pura(df_bcb, data_ped, data_juros, data_calculo)
+            else: f_cm_ped, f_jur_ped = calc_selic_pura(df_bcb, data_ped, data_juros, data_calculo)
             
             risco_princ = v_pedido * f_cm_ped
             risco_atualizado_total = risco_princ + (risco_princ * f_jur_ped)
@@ -411,7 +416,8 @@ def executar_nash(caminho_entrada, arquivo_saida):
         total_final_processo = saldo_principal + saldo_juros
         gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, 0, 0, 0, 0, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico_cg, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
-    if 'Risco Atual' in df_danos.columns and df_danos['Risco Atual'].sum() > 0:
+    # GERA EXITO APENAS SE FOR RÉU/DEFESA
+    if 'AUTOR' not in atuacao and 'Risco Atual' in df_danos.columns and df_danos['Risco Atual'].sum() > 0:
         gerar_relatorio_exito_cliente(processo, df_danos[df_danos['Risco Atual'] > 0], arquivo_saida)
 
 # --- 6. GERAÇÕES DE ARQUIVOS (LAUDO E ÊXITO) ---
@@ -561,7 +567,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         ws.column_dimensions[letra_col].width = larg_min
     
     ws.print_area = f'A1:H{linha}'; ws.page_setup.fitToWidth = 1; ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE # <-- NOVO: Força Paisagem no Laudo Padrão
+    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
     
     nome_saida = str(arquivo_saida)
     if nome_saida.endswith(('.ods', '.xls')): nome_saida = nome_saida.rsplit('.', 1)[0] + '.xlsx'
@@ -659,7 +665,7 @@ class NashGUI:
     def __init__(self, root):
         self.root = root
         self.root.title(f"Nash System - Liquidação (v{__version__})")
-        self.root.geometry("640x550")
+        self.root.geometry("640x580")
         self.root.configure(padx=20, pady=20)
         icone_path = PASTA_TEMP / "dr_nash.ico"
         if icone_path.exists():
@@ -674,7 +680,9 @@ class NashGUI:
         regras = [
             ("R1", "TJMG + Juros de 1% a.m."),
             ("R2", "Taxa Selic (critério único)"),
+            ("R3", "TJMG + Juros 1% a.m. até 08/24; após, Selic"),
             ("R4", "TJMG + Juros 1% a.m. até 08/24; após, Lei 14.905/24"),
+            ("R5", "Selic até 08/24; após, Lei 14.905/24 (Tema 1.368 STJ)"),
             ("R6", "Lei 14.905/24: IPCA + Taxa Legal"),
             ("Hon.", "Base na Condenação ou Valor da Causa (STJ: s/ juros)"),
             ("Prop.", "Reembolso proporcional de Custas/Hon. (ex: 70%)"),

@@ -1,57 +1,76 @@
-import pandas as pd
-from pathlib import Path
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
-# Garante que a pasta Processos_Entrada existe
-pasta_entrada = Path("Processos_Entrada")
-pasta_entrada.mkdir(exist_ok=True)
+wb = Workbook()
 
-caminho_arquivo = pasta_entrada / "entrada_nash.xlsx"
+f_bold = Font(bold=True)
+borda = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+fill_cinza = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
 
-# Aba 1: Parâmetros (Formato chave-valor)
-param_data = {
-    "Chave": [
-        "Processo", 
-        "Data do Trânsito", 
-        "Justiça Gratuita", 
-        "Pagamento Voluntário 15d", 
-        "Honorários Sucumbência"
-    ],
-    "Valor": [
-        "0000000-00.2026.8.13.0024", 
-        "",  # Vazio para testar a lógica de Acordo Pré-Sentença
-        "Não", 
-        "Não", 
-        10
-    ]
-}
-df_param = pd.DataFrame(param_data)
+# --- 1. ABA PARAMETROS ---
+ws_param = wb.active
+ws_param.title = "Parametros"
 
-# Aba 2: Danos e Notas (Categoria 1)
-danos_data = {
-    "ID / Folha": ["Id. 123456", "Id. 123457"],
-    "Descrição": ["Conserto da motocicleta", "Capacete e vestuário"],
-    "Data Desembolso": ["15/01/2023", "18/01/2023"],
-    "Valor Histórico": [4500.00, 850.00],
-    "Regra": ["TJMG_ate_LeiNova", "TJMG_ate_LeiNova"]
-}
-df_danos = pd.DataFrame(danos_data)
+parametros = [
+    ("Processo", "5000000-00.2026.8.13.0024"),
+    ("Atuação", "RÉU"),  # AUTOR ou RÉU
+    ("Data do Trânsito", "30/08/2023"),
+    ("Data da Sentença", "18/07/2023"),
+    ("Termo Inicial Juros", "Desembolso"),
+    ("Data da Citação", "19/05/2022"),
+    ("Data do Evento", "05/09/2016"),
+    ("Justiça Gratuita", "Não"),
+    ("Pagamento Voluntário 15d", "Sim"),
+    ("Fazenda Pública", "Não"),
+    ("Honorários Sucumbência", 10),
+    ("Honorários Fixos (R$)", ""),
+    ("Base Honorários", "CONDENAÇÃO"),
+    ("Valor Causa Original", ""),
+    ("Data Propositura", ""),
+    ("Proporção Honorários (%)", "100%"),
+    ("Proporção Custas (%)", "100%")
+]
 
-# Aba 3: Custas e Despesas Processuais (Categoria 2)
-custas_data = {
-    "ID / Folha": ["Id. 234567", "Id. 234568"],
-    "Descrição": ["Custas Iniciais", "Guia de Oficial de Justiça"],
-    "Data Desembolso": ["20/01/2023", "25/02/2023"],
-    "Valor Histórico": [250.00, 95.50]
-}
-df_custas = pd.DataFrame(custas_data)
+for r_idx, (chave, valor) in enumerate(parametros, 1):
+    c1 = ws_param.cell(row=r_idx, column=1, value=chave)
+    c1.font = f_bold; c1.fill = fill_cinza; c1.border = borda
+    
+    c2 = ws_param.cell(row=r_idx, column=2, value=valor)
+    c2.border = borda
 
-# Gerando o arquivo Excel com múltiplas abas usando openpyxl
-print("Fabricando a planilha modelo do Nash...")
-with pd.ExcelWriter(caminho_arquivo, engine='openpyxl') as writer:
-    # Salvando sem o cabeçalho na aba de Parâmetros para ficar mais limpo
-    df_param.to_excel(writer, sheet_name='Parametros', index=False, header=False)
-    df_danos.to_excel(writer, sheet_name='Danos', index=False)
-    df_custas.to_excel(writer, sheet_name='Custas', index=False)
+ws_param.column_dimensions['A'].width = 25
+ws_param.column_dimensions['B'].width = 30
 
-print(f"✓ Sucesso! Arquivo gerado em: {caminho_arquivo.absolute()}")
-print("Você já pode abrir o LibreOffice Calc para conferir o resultado.")
+# --- 2. ABA DANOS ---
+ws_danos = wb.create_sheet('Danos')
+headers_danos = ['ID / Folha', 'Descrição', 'Data Desembolso', 'Valor Histórico', 'Regra', 'Data Juros', 'Valor Pedido Inicial', 'Data do Pedido']
+for col_idx, h in enumerate(headers_danos, 1):
+    cell = ws_danos.cell(row=1, column=col_idx, value=h)
+    cell.font = f_bold; cell.fill = fill_cinza; cell.border = borda
+
+for col_letter in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']:
+    ws_danos.column_dimensions[col_letter].width = 20
+
+# --- 3. ABA CUSTAS ---
+ws_custas = wb.create_sheet('Custas')
+headers_custas = ['ID / Folha', 'Descrição', 'Data Desembolso', 'Valor Histórico']
+for col_idx, h in enumerate(headers_custas, 1):
+    cell = ws_custas.cell(row=1, column=col_idx, value=h)
+    cell.font = f_bold; cell.fill = fill_cinza; cell.border = borda
+
+for col_letter in ['A', 'B', 'C', 'D']:
+    ws_custas.column_dimensions[col_letter].width = 22
+
+# --- 4. ABA DEDUCOES ---
+ws_deducoes = wb.create_sheet('Deducoes')
+headers_deducoes = ['ID / Folha', 'Data bloqueio/deposito', 'Valor']
+for col_idx, h in enumerate(headers_deducoes, 1):
+    cell = ws_deducoes.cell(row=1, column=col_idx, value=h)
+    cell.font = f_bold; cell.fill = fill_cinza; cell.border = borda
+
+for col_letter in ['A', 'B', 'C']:
+    ws_deducoes.column_dimensions[col_letter].width = 25
+
+# Salva o arquivo oficial
+wb.save('template_nash.xlsx')
+print("Template oficial corrigido e salvo como 'template_nash.xlsx' com sucesso!")
