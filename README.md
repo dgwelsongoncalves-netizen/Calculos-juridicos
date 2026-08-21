@@ -1,62 +1,78 @@
-# Nash System - Assistente de Cálculos Judiciais (v2.7.0)
+Markdown
 
-Sistema automatizado de liquidação e atualização de débitos judiciais, desenvolvido para cálculos precisos com base na jurisprudência, Tabela do TJMG e parâmetros da taxa Selic / Lei 14.905/2024.
+# 🏛️ Nash System (v2.8.4)
+**Assistente de Cálculos Judiciais, Liquidação de Sentença e Demonstração de Êxito**
+
+O **Nash System** é uma ferramenta interna desenvolvida em Python para automatizar o processamento de cálculos judiciais complexos, elaboração de laudos de liquidação de sentença e relatórios de proveito econômico (êxito). O sistema lê uma planilha padrão em Excel, aplica rigorosamente as tabelas oficiais e a legislação vigente, e gera arquivos auditáveis em Excel (`.xlsx`) e relatórios executivos em PDF orientados em paisagem (`landscape`).
+
+---
 
 ## 🚀 Principais Funcionalidades
-- **Múltiplas Regras Matemáticas:** Suporte a critérios exclusivos (TJMG + Juros, Selic Pura, divisões de períodos pré e pós-agosto de 2024, e o novo padrão IPCA + Taxa Legal).
-- **Honorários Equitativos e Sucumbência Recíproca:** Atualização monetária conforme a Súmula 14 do STJ e rateio automático de despesas.
-- **Regra Trifásica de Cumprimento de Sentença:** Tratamento automatizado para o prazo de pagamento voluntário (art. 523 do CPC) conjugado com as diretrizes de Justiça Gratuita do executado.
-- **Conta Gráfica (Art. 354 CC):** Amortização automática de bloqueios e depósitos judiciais ao longo do tempo.
-- **Demonstrativo de Êxito:** Geração autônoma de relatório executivo comprovando a economia gerada ao cliente, com preservação total de sigilo financeiro.
-- **Integração Nativa com o Banco Central:** Consulta automática e em tempo real das séries temporais do SGS (Selic, IPCA e Taxa Legal).
-- **Relatórios em Excel:** Geração de laudos formatados com grades profissionais, cores corporativas e indicativos de exigibilidade.
 
-## 💻 Requisitos
-- Python 3.10 ou superior
-- Bibliotecas: `pandas`, `openpyxl`, `python-bcb`, `typing-extensions`
+- **Motor Matemático Avançado:** Suporte a múltiplos critérios de correção monetária (Tabela TJMG, IPCA, IPCA-E, INPC) e juros de mora (1% ao mês, Taxa Selic, e transições normativas).
+- **Adequação à Nova Legislação (Lei 14.905/24 & Tema 1.368 STJ):** Tratamento automatizado para o corte de agosto de 2024 (transição para IPCA + Taxa Legal do Banco Central).
+- **Conta Gráfica (Amortização Art. 354 do CC):** Abatimento automático de depósitos judiciais e bloqueios (Sisbajud), separando juros e principal para estancar a correção sobre o montante garantido.
+- **Governança por Atuação (Autor vs. Réu):** Configuração inteligente que gera o Laudo Oficial para o PJe e oculta automaticamente o Relatório de Êxito quando o escritório atua pela parte ativa.
+- **Marcos Temporais Desacoplados:** Capacidade de fixar datas de juros independentes por verba, blindando o cálculo contra divergências sentenciais.
+- **Exportação Multiplataforma para PDF:** Conversão automática dos laudos e demonstrativos em arquivos PDF perfeitamente formatados usando o LibreOffice em modo *headless* (compatível com Windows e Linux).
 
 ---
 
-## 📘 Manual de Uso (POP) para Advogados
+## 📖 Dicionário de Regras Matemáticas
 
-O Nash System lê a nossa planilha padrão (`template_nash.xlsx`) e gera os laudos automaticamente, blindando o escritório contra erros matemáticos. Siga o fluxo abaixo:
+Na aba **Danos** da planilha padrão, utilize os seguintes códigos de regra conforme determinado na sentença:
 
-### Passo 1: A Aba "Parâmetros"
-Nesta aba, você informa os dados gerais do processo e a base da condenação. Preste muita atenção aos campos de honorários e proporção:
-*   **Base Honorários:** Digite `CONDENAÇÃO` se estivermos executando a parte contrária. Digite `VALOR DA CAUSA` se estivermos pela Defesa e o juiz fixou honorários sobre o valor da causa (o sistema aplicará a regra do STJ: atualização desde a propositura, sem juros de mora).
-*   **Data Propositura:** Essencial preencher se estivermos pela Defesa.
-*   **Proporção Honorários / Custas (%):** Se houve sucumbência recíproca (ex: ganhamos 70% e perdemos 30%), digite `70%`. Se ganhamos tudo, deixe `100%`. O sistema fará o rateio automático.
-
-### Passo 2: O Dicionário de Regras (Aba "Danos")
-Na coluna **Regra**, você deve digitar o código exato correspondente ao que o juiz determinou na sentença.
-*   **R1 (Padrão Antigo TJMG):** Tabela da Corregedoria do TJMG + Juros de 1% ao mês.
-*   **R2 (Selic Pura):** Apenas a Taxa Selic (engloba juros e correção). Comum em restituição de tributos.
-*   **R3 (Transição Selic):** TJMG + Juros de 1% ao mês até 08/2024. A partir daí, aplica-se apenas a Taxa Selic.
-*   **R4 (A Mais Comum Agora):** TJMG + Juros de 1% ao mês até 08/2024. A partir daí, aplica-se automaticamente a nova **Lei 14.905/24** (IPCA + Taxa Legal do Banco Central).
-*   **R5 (Transição Mista - Tema 1.368 do STJ):** Taxa Selic até 08/2024. A partir daí, aplica-se a nova **Lei 14.905/24** (IPCA + Taxa Legal).
-*   **R6 (Nova Lei Pura):** Aplica a Lei 14.905/24 desde o início.
-*   *Nota sobre Fazenda Pública:* Se na aba de parâmetros a "Fazenda Pública" estiver como "Sim", o sistema forçará o Tema 810 do STF e a EC 113.
-
-### Passo 3: Como Gerar o "Relatório de Êxito" (Defesa)
-Quando atuamos na defesa, precisamos demonstrar a economia gerada.
-1.  **Valor Histórico:** Coloque o que o autor *efetivamente ganhou* (se ele perdeu a verba, coloque **0,00** e preencha a data do evento para base temporal).
-2.  **Valor Pedido Inicial:** Coloque o que o autor *havia pedido na inicial* (o nosso risco financeiro).
-3.  **Data do Pedido:** Coloque a data do ajuizamento da ação (ou aditamento).
-
-*O sistema gerará dois arquivos: O Laudo (para juntar no PJe) e o Relatório de Êxito (documento interno para prestação de contas com o cliente).*
-
-### Passo 4: Depósitos e Bloqueios (Aba "Deduções")
-Se houve depósitos judiciais (pagamento voluntário) ou bloqueios Bacenjud/Sisbajud na conta do executado, lance na aba "Deduções" com **Data, Valor e ID do PJe**. O sistema abaterá primeiro os juros e depois o principal, parando a fluência da correção sobre a quantia garantida.
-
-### 🚀 Como Executar o Sistema
-1.  Preencha o `template_nash.xlsx` e salve-o renomeado com o número do processo.
-2.  Abra o executável do **Nash System**.
-3.  Clique em **"Selecionar Planilha e Calcular"**.
-4.  Selecione a sua planilha. Os laudos estarão na mesma pasta prontos para uso.
+*   **`R1`**: TJMG + Juros de 1% a.m. (Padrão clássico).
+*   **`R2`**: Taxa Selic (critério único de correção e juros).
+*   **`R3`**: TJMG + Juros de 1% a.m. até 08/2024; após, transição para Taxa Selic.
+*   **`R4`**: TJMG + Juros de 1% a.m. até 08/2024; após, transição para a **Lei 14.905/24** (IPCA + Taxa Legal).
+*   **`R5`**: Taxa Selic até 08/2024; após, transição para a **Lei 14.905/24** (Tema 1.368 do STJ).
+*   **`R6`**: Aplicação integral da **Lei 14.905/24** desde a origem.
+*   *Nota Fazenda Pública:* Se a chave correspondente estiver ativa, o sistema aplica automaticamente o Regime da EC 113 / Tema 810 do STF.
 
 ---
 
-## 📄 Licença
-Este programa é um software livre: você pode redistribuí-lo e/ou modificá-lo sob os termos da **GNU Affero General Public License (AGPL)** conforme publicada pela Free Software Foundation, na versão 3 da Licença, ou (a seu critério) qualquer versão posterior.
+## 📋 Passo a Passo de Uso (Como Preencher e Rodar)
 
-Consulte o arquivo `LICENSE` para obter mais detalhes.
+### Passo 1: Preenchimento da Planilha Padrão (`template_nash.xlsx`)
+1. **Aba "Parametros":** Insira os dados gerais do processo. Preste atenção especial na linha **Atuação** (digite `RÉU` se estivermos na defesa para gerar o relatório de êxito, ou `AUTOR` se estivermos na ativa para gerar apenas o laudo principal) e na **Base Honorários** (`CONDENAÇÃO` ou `VALOR DA CAUSA`).
+2. **Aba "Danos":** Lance os valores históricos, datas de desembolso e a regra aplicável (`R1` a `R6`). Caso a sentença fixe marcos temporais diferentes para a correção e para os juros, utilize a coluna opcional **Data Juros**. Se estiver atuando pela defesa (`RÉU`), preencha também as colunas de **Valor Pedido Inicial** e **Data do Pedido** para calcular a economia gerada.
+3. **Aba "Custas":** Lance as custas e despesas processuais comprovadas.
+4. **Aba "Deducoes":** Caso existam depósitos judiciais ou bloqueios (Sisbajud), lance as datas e valores para que o sistema monte a Conta Gráfica (Art. 354 do CC).
+5. Salve e feche a planilha (recomenda-se renomeá-la com o número do processo, ex: `Planilha_5001234.xlsx`).
+
+---
+
+## 💻 Instruções de Execução
+
+### Opção A: Uso no Windows (Equipe e Advogados Associados)
+1. Certifique-se de que o **LibreOffice** está instalado na máquina (para que a conversão automática para PDF funcione em segundo plano).
+2. Dê dois cliques no executável do **Nash System** disponibilizado pelo escritório.
+3. Clique em **"📂 Selecionar Planilha e Calcular"**.
+4. Escolha a planilha preenchida do processo. O sistema processará os dados em background e gerará os arquivos `.xlsx` e `.pdf` diretamente na mesma pasta do arquivo original.
+
+### Opção B: Uso no Linux / Desenvolvimento (Terminal ou VS Code)
+1. Abra o seu terminal ou o **VS Code** na pasta raiz do projeto.
+2. Certifique-se de ativar o seu ambiente virtual (caso utilize) e de que o LibreOffice está instalado (`sudo dnf install libreoffice` ou `sudo apt install libreoffice`).
+3. Instale ou atualize as dependências do Python:
+   ```bash
+   pip install -r requirements.txt
+
+    Execute o script principal da interface gráfica:
+    Bash
+
+    python nash.py
+
+    Na janela que se abrir, clique no botão de seleção de planilha e aponte para o arquivo desejado.
+
+📂 Estrutura do Repositório
+Plaintext
+
+├── Tabelas_Oficiais/
+│   └── tabela_tjmg.xlsx         # Índice oficial de correção do TJMG
+├── template_nash.xlsx           # Planilha modelo padrão do escritório
+├── nash.py                      # Código-fonte principal (Motor + Interface GUI)
+├── requirements.txt             # Dependências do projeto (pandas, openpyxl, bcb, etc.)
+└── README.md                    # Documentação oficial
+
+Desenvolvido para otimizar o fluxo de trabalho e assegurar precisão matemática absoluta em laudos judiciais.
