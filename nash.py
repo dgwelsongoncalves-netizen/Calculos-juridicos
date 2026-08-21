@@ -9,8 +9,10 @@ import sys
 import os
 import logging
 import traceback
+import platform
+import subprocess
 
-__version__ = "2.7.0" # Add: Relatório de Êxito focado exclusivamente no Proveito Econômico (Risco vs. Resultado)
+__version__ = "2.8.2" # Ajuste: Layout em Paisagem (Landscape) para Laudo e Êxito, otimizando o espaço das colunas no PDF.
 
 # --- 1. CONFIGURAÇÕES BASE ---
 if getattr(sys, 'frozen', False):
@@ -124,7 +126,34 @@ def calc_leinova_pura(df_bcb, data_cm, data_juros, data_calculo):
     juros = df_bcb['TAXA_LEGAL'].loc[(df_bcb['TAXA_LEGAL'].index >= pd.to_datetime(f"{data_juros.year}-{data_juros.month:02d}-01")) & (df_bcb['TAXA_LEGAL'].index <= d_calc_m), 'TAXA_LEGAL'].sum() if pd.notna(data_juros) and data_juros <= data_calculo else 0.0
     return f_ipca, juros
 
-# --- 4. PROCESSAMENTO CENTRAL ---
+# --- 4. EXPORTAÇÃO PARA PDF ---
+def converter_para_pdf(caminho_xlsx):
+    caminho_xlsx = Path(caminho_xlsx)
+    pasta_saida = caminho_xlsx.parent
+    
+    if platform.system() == "Windows":
+        caminhos_lo = [r"C:\Program Files\LibreOffice\program\soffice.exe", r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"]
+        lo_path = None
+        for p in caminhos_lo:
+            if os.path.exists(p):
+                lo_path = p
+                break
+        if not lo_path:
+            logging.warning("LibreOffice não encontrado no Windows. PDF não será gerado automaticamente.")
+            return False
+        comando = [lo_path, "--headless", "--convert-to", "pdf", "--outdir", str(pasta_saida), str(caminho_xlsx)]
+    else:
+        comando = ["libreoffice", "--headless", "--convert-to", "pdf", "--outdir", str(pasta_saida), str(caminho_xlsx)]
+        
+    try:
+        subprocess.run(comando, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logging.info(f"PDF gerado com sucesso: {caminho_xlsx.with_suffix('.pdf').name}")
+        return True
+    except Exception as e:
+        logging.error(f"Erro ao converter {caminho_xlsx.name} para PDF: {e}")
+        return False
+
+# --- 5. PROCESSAMENTO CENTRAL ---
 def executar_nash(caminho_entrada, arquivo_saida):
     tabela_tjmg = carregar_tjmg()
     xls = pd.ExcelFile(caminho_entrada)
@@ -167,7 +196,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
     df_danos['Data Desembolso'] = pd.to_datetime(df_danos.get('Data Desembolso', pd.NaT), format='mixed', dayfirst=True, errors='coerce')
     df_danos['Data do Pedido'] = pd.to_datetime(df_danos.get('Data do Pedido', pd.NaT), format='mixed', dayfirst=True, errors='coerce')
     
-    # Tratativa: Se o juiz deu 0,00 e a data de desembolso tá vazia, usa a do pedido pra não dar erro
     df_danos.loc[(df_danos['Valor Histórico'] == 0) & (df_danos['Data Desembolso'].isna()), 'Data Desembolso'] = df_danos['Data do Pedido']
     
     df_custas = pd.read_excel(xls, sheet_name='Custas').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
@@ -197,7 +225,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
 
     total_final_processo = 0.0
     
-    # PROCESSAMENTO DOS DANOS E CÁLCULO DE ÊXITO SIMULTÂNEO
     for idx, row in df_danos.iterrows():
         data_cm = row['Data Desembolso']
         if pd.isna(data_cm): continue
@@ -217,16 +244,24 @@ def executar_nash(caminho_entrada, arquivo_saida):
         df_danos.at[idx, 'Fator CM'] = f_cm
         df_danos.at[idx, 'Fator Juros'] = f_jur
         
-        # --- CÁLCULO DO ÊXITO DA VERBA (SEM HONORÁRIOS) ---
         v_pedido = float(row['Valor Pedido Inicial'])
         if v_pedido > 0 and pd.notna(row['Data do Pedido']):
-            f_cm_ped = obter_fator_tjmg(tabela_tjmg, row['Data do Pedido'], data_calculo)
-            risco_atual = v_pedido * f_cm_ped
-            proveito = max(0, risco_atual - (val_princ + val_jur))
-            df_danos.at[idx, 'Risco Atual'] = risco_atual
+            data_ped = row['Data do Pedido']
+            data_juros_ped = data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_ped
+            
+            if is_fazenda: f_cm_ped, f_jur_ped = calc_fazenda_publica(df_bcb, data_ped, data_juros_ped, data_calculo)
+            elif regra == 'R1': f_cm_ped, f_jur_ped = calc_tjmg_juros(tabela_tjmg, data_ped, data_juros_ped, data_calculo)
+            elif regra == 'R4': f_cm_ped, f_jur_ped = calc_tjmg_leinova(tabela_tjmg, df_bcb, data_ped, data_juros_ped, data_calculo)
+            elif regra == 'R6': f_cm_ped, f_jur_ped = calc_leinova_pura(df_bcb, data_ped, data_juros_ped, data_calculo)
+            else: f_cm_ped, f_jur_ped = calc_selic_pura(df_bcb, data_ped, data_juros_ped, data_calculo)
+            
+            risco_princ = v_pedido * f_cm_ped
+            risco_atualizado_total = risco_princ + (risco_princ * f_jur_ped)
+            proveito = max(0, risco_atualizado_total - (val_princ + val_jur))
+            
+            df_danos.at[idx, 'Risco Atual'] = risco_atualizado_total
             df_danos.at[idx, 'Proveito'] = proveito
 
-    # --- MODO 1: SEM DEDUÇÕES ---
     if not tem_deducao:
         total_princ_danos = sum([r['Valor Atualizado'] / (1 + r['Fator Juros']) for _, r in df_danos.iterrows() if r['Valor Histórico']>0])
         total_juros_danos = df_danos['Valor Atualizado'].sum() - total_princ_danos
@@ -265,9 +300,8 @@ def executar_nash(caminho_entrada, arquivo_saida):
         total_final_processo = base_multa + valor_multa + hon_523
         gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, (subtotal_princ+subtotal_juros), (hon_exigivel_princ+hon_exigivel_juros), valor_multa, hon_523, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, [], base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
-    # --- MODO 2: COM DEDUÇÕES ---
     else:
-        df_danos['Valor Atualizado'] = df_danos['Valor Histórico'] # Só pro display da CG
+        df_danos['Valor Atualizado'] = df_danos['Valor Histórico'] 
         df_custas['Exigível'] = df_custas['Valor Histórico'] if not jg else 0.0
         
         historico_cg = []; saldo_principal = 0.0; saldo_juros = 0.0
@@ -377,11 +411,10 @@ def executar_nash(caminho_entrada, arquivo_saida):
         total_final_processo = saldo_principal + saldo_juros
         gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, 0, 0, 0, 0, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico_cg, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
-    # --- NOVO: GERAR RELATÓRIO DE ÊXITO DETALHADO P/ CLIENTE ---
     if 'Risco Atual' in df_danos.columns and df_danos['Risco Atual'].sum() > 0:
         gerar_relatorio_exito_cliente(processo, df_danos[df_danos['Risco Atual'] > 0], arquivo_saida)
 
-# --- 5. GERAÇÕES DE ARQUIVOS (LAUDO E ÊXITO) ---
+# --- 6. GERAÇÕES DE ARQUIVOS (LAUDO E ÊXITO) ---
 def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo):
     wb = Workbook()
     ws = wb.active
@@ -420,12 +453,14 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
 
     cabs = ['ID / Folha', 'Descrição', 'Data', 'Valor Hist.', 'Fator Corr.', 'Juros (%)', 'Regra', 'Valor Atualizado']
-    for i, t in enumerate(cabs, 1): ws.cell(row=linha, column=i, value=t).font = f_negrito; ws.cell(row=linha, column=i).border = borda
+    for i, t in enumerate(cabs, 1): 
+        ws.cell(row=linha, column=i, value=t).font = f_negrito
+        ws.cell(row=linha, column=i).border = borda
+        ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center")
     linha += 1
 
     for _, r in df_danos.iterrows():
         exibe_data = r['Data Desembolso'].strftime('%d/%m/%Y') if float(r['Valor Histórico']) > 0 else "-" 
-        
         ws.cell(row=linha, column=1, value=r['ID / Folha']).border = borda
         ws.cell(row=linha, column=2, value=r['Descrição']).border = borda
         ws.cell(row=linha, column=3, value=exibe_data).border = borda
@@ -442,7 +477,10 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
     
     cabs_custas = ['ID / Folha', 'Descrição', 'Data', 'Valor Hist.', 'Fator Corr.', 'Juros (%)', 'Regra', 'Atualizado Exigível']
-    for i, t in enumerate(cabs_custas, 1): ws.cell(row=linha, column=i, value=t).font = f_negrito; ws.cell(row=linha, column=i).border = borda
+    for i, t in enumerate(cabs_custas, 1): 
+        ws.cell(row=linha, column=i, value=t).font = f_negrito
+        ws.cell(row=linha, column=i).border = borda
+        ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center")
     linha += 1
     
     for _, r in df_custas.iterrows():
@@ -465,11 +503,17 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         
         ws.merge_cells(f'A{linha}:B{linha}'); ws.merge_cells(f'C{linha}:D{linha}')
         cabs_cg_titles = ['Data', 'Evento', 'Principal Corrigido', 'Juros Acumulados', 'Valor Pago/Bloqueio', 'Saldo Devedor Total']
-        ws.cell(row=linha, column=1, value='Data').font = f_negrito; ws.cell(row=linha, column=1).border = borda; ws.cell(row=linha, column=1).fill = fundo_cinza
+        
+        ws.cell(row=linha, column=1, value='Data').font = f_negrito; ws.cell(row=linha, column=1).border = borda; ws.cell(row=linha, column=1).fill = fundo_cinza; ws.cell(row=linha, column=1).alignment = Alignment(vertical="center", horizontal="center")
         ws.cell(row=linha, column=2).border = borda; ws.cell(row=linha, column=2).fill = fundo_cinza
-        ws.cell(row=linha, column=3, value='Evento').font = f_negrito; ws.cell(row=linha, column=3).border = borda; ws.cell(row=linha, column=3).fill = fundo_cinza
+        ws.cell(row=linha, column=3, value='Evento').font = f_negrito; ws.cell(row=linha, column=3).border = borda; ws.cell(row=linha, column=3).fill = fundo_cinza; ws.cell(row=linha, column=3).alignment = Alignment(vertical="center", horizontal="center")
         ws.cell(row=linha, column=4).border = borda; ws.cell(row=linha, column=4).fill = fundo_cinza
-        for i, t in enumerate(cabs_cg_titles[2:], 5): ws.cell(row=linha, column=i, value=t).font = f_negrito; ws.cell(row=linha, column=i).border = borda; ws.cell(row=linha, column=i).fill = fundo_cinza
+        
+        for i, t in enumerate(cabs_cg_titles[2:], 5): 
+            ws.cell(row=linha, column=i, value=t).font = f_negrito
+            ws.cell(row=linha, column=i).border = borda
+            ws.cell(row=linha, column=i).fill = fundo_cinza
+            ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center")
         linha += 1
         
         for data, evento, princ, jur, pago, saldo in historico:
@@ -512,15 +556,12 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
             add_total("Multa Art. 523 CPC (10%):", multa); add_total("Honorários Art. 523 CPC (10%):", hon_523)
         add_total("TOTAL GERAL DEVIDO:", total, True, True)
 
-    larguras_minimas = {'A': 15, 'B': 25, 'C': 15, 'D': 16, 'E': 14, 'F': 12, 'G': 18, 'H': 20}
+    larguras_minimas = {'A': 16, 'B': 28, 'C': 16, 'D': 16, 'E': 14, 'F': 12, 'G': 18, 'H': 20}
     for letra_col, larg_min in larguras_minimas.items():
-        max_len = larg_min
-        for row in range(8, linha + 1):
-            valor_celula = ws[f'{letra_col}{row}'].value
-            if valor_celula: max_len = max(max_len, len(str(valor_celula)))
-        ws.column_dimensions[letra_col].width = min(max_len + 2, 50)
+        ws.column_dimensions[letra_col].width = larg_min
     
     ws.print_area = f'A1:H{linha}'; ws.page_setup.fitToWidth = 1; ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE # <-- NOVO: Força Paisagem no Laudo Padrão
     
     nome_saida = str(arquivo_saida)
     if nome_saida.endswith(('.ods', '.xls')): nome_saida = nome_saida.rsplit('.', 1)[0] + '.xlsx'
@@ -533,6 +574,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
             contador += 1
             
     wb.save(str(path_final))
+    converter_para_pdf(path_final)
 
 def gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida_base):
     wb = Workbook()
@@ -563,7 +605,7 @@ def gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida_base):
         ws.cell(row=4, column=col, value=texto).font = f_negrito
         ws.cell(row=4, column=col).fill = fundo_cinza
         ws.cell(row=4, column=col).border = borda
-        ws.cell(row=4, column=col).alignment = Alignment(horizontal="center")
+        ws.cell(row=4, column=col).alignment = Alignment(horizontal="center", vertical="center")
         
     linha = 5
     soma_risco = soma_condenacao = soma_proveito = 0.0
@@ -592,8 +634,11 @@ def gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida_base):
     
     for c in range(1, 5): ws.cell(row=linha, column=c).border = borda
 
-    ws.column_dimensions['A'].width = 40; ws.column_dimensions['B'].width = 35
+    ws.column_dimensions['A'].width = 35; ws.column_dimensions['B'].width = 35
     ws.column_dimensions['C'].width = 35; ws.column_dimensions['D'].width = 35
+    
+    ws.print_area = f'A1:D{linha}'; ws.page_setup.fitToWidth = 1; ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
     
     nome_base = arquivo_saida_base.name.replace('Laudo_', 'Relatorio_Exito_Detalhado_')
     if 'Relatorio_Exito_' not in nome_base: nome_base = f"Relatorio_Exito_Detalhado_{arquivo_saida_base.name}"
@@ -608,6 +653,7 @@ def gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida_base):
             
     wb.save(str(path_final))
     logging.info(f"Relatório de Êxito Cliente gerado com sucesso: {path_final.name}")
+    converter_para_pdf(path_final)
 
 class NashGUI:
     def __init__(self, root):
@@ -650,7 +696,7 @@ class NashGUI:
         if not caminho: return
         caminho_entrada = Path(caminho)
         arquivo_saida = caminho_entrada.parent / f"Laudo_{caminho_entrada.name}"
-        self.lbl_status.config(text="Processando cálculo...", fg="blue")
+        self.lbl_status.config(text="Processando cálculo e gerando PDFs...", fg="blue")
         self.btn_processar.config(state="disabled")
         self.root.update()
         threading.Thread(target=self.processar_em_background, args=(caminho_entrada, arquivo_saida)).start()
@@ -660,9 +706,9 @@ class NashGUI:
         try:
             executar_nash(caminho_entrada, arquivo_saida)
             def sucesso():
-                self.lbl_status.config(text=f"Cálculos e Relatórios gerados com sucesso.", fg="green")
+                self.lbl_status.config(text=f"Cálculos e PDFs gerados com sucesso.", fg="green")
                 self.btn_processar.config(state="normal")
-                messagebox.showinfo("Sucesso", "O Laudo de Liquidação e Êxito foram processados!")
+                messagebox.showinfo("Sucesso", "O Laudo de Liquidação e Êxito foram processados e exportados para PDF!")
             self.root.after(0, sucesso)
         except Exception as e:
             tb_str = traceback.format_exc()
