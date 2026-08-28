@@ -21,14 +21,21 @@ jobs:
     - name: Instalar bibliotecas fixadas
       run: |
         python -m pip install --upgrade pip
+        pip install pyinstaller
         pip install -r requirements.txt
         
     - name: Fabricar o aplicativo Windows
       run: |
         pyinstaller --noconfirm --onedir --windowed --icon=dr_nash.ico --add-data "dr_nash.ico;." --name="Nash_System" nash.py
 
+    - name: Copiar planilhas e tabelas para a pasta final
+      shell: bash
+      run: |
+        cp -r Tabelas_Oficiais dist/Nash_System/
+        cp template_nash.xlsx dist/Nash_System/
+
     - name: Salvar pacote para download
       uses: actions/upload-artifact@v4
       with:
-        name: Nash_System_Windows
+        name: Nash_System_Windows_Pronto
         path: dist/Nash_System

@@ -1,7 +1,3 @@
-import pandas as pd
-from pathlib import Path
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import threading
@@ -11,8 +7,25 @@ import logging
 import traceback
 import platform
 import subprocess
+from pathlib import Path
 
-__version__ = "2.8.4" # Add: Parâmetro de Atuação (Autor/Réu) e Desacoplamento Total de Marcos (Correção vs Juros por Verba)
+__version__ = "2.8.6" # Add: Lazy Loading (Performance Background) + Trava Instância Única Mutex
+
+# --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
+pd = None
+Workbook = None
+Font = PatternFill = Alignment = Border = Side = None
+
+def preload_heavy_libs():
+    global pd, Workbook, Font, PatternFill, Alignment, Border, Side
+    if pd is None:
+        try:
+            import pandas as pd
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            logging.info("Bibliotecas pesadas carregadas em background com sucesso.")
+        except Exception as e:
+            logging.error(f"Erro no pre-load: {e}")
 
 # --- 1. CONFIGURAÇÕES BASE ---
 if getattr(sys, 'frozen', False):
@@ -126,35 +139,54 @@ def calc_leinova_pura(df_bcb, data_cm, data_juros, data_calculo):
     juros = df_bcb['TAXA_LEGAL'].loc[(df_bcb['TAXA_LEGAL'].index >= pd.to_datetime(f"{data_juros.year}-{data_juros.month:02d}-01")) & (df_bcb['TAXA_LEGAL'].index <= d_calc_m), 'TAXA_LEGAL'].sum() if pd.notna(data_juros) and data_juros <= data_calculo else 0.0
     return f_ipca, juros
 
+def calc_tjmg_taxalegal_retroativa(df_tjmg, df_bcb, data_cm, data_juros, data_calculo):
+    data_corte = pd.to_datetime("2024-08-30")
+    corte_mes = pd.to_datetime("2024-08-01")
+    data_calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
+    
+    f_cm_1 = obter_fator_tjmg(df_tjmg, data_cm, data_corte) if data_cm < data_corte else 1.0
+    f_cm_2 = 1.0
+    
+    if data_calc_mes >= corte_mes and df_bcb is not None:
+        inicio_ipca = max(corte_mes, pd.to_datetime(f"{data_cm.year}-{data_cm.month:02d}-01"))
+        if inicio_ipca <= data_calc_mes:
+            f_cm_2 = (1 + df_bcb['IPCA'].loc[(df_bcb['IPCA'].index >= inicio_ipca) & (df_bcb['IPCA'].index <= data_calc_mes), 'IPCA']).prod()
+            
+    f_cm_total = f_cm_1 * f_cm_2
+    juros_acumulados = 0.0
+    
+    if df_bcb is not None and pd.notna(data_juros) and data_juros <= data_calculo:
+        data_juros_mes = pd.to_datetime(f"{data_juros.year}-{data_juros.month:02d}-01")
+        df_periodo = df_bcb['SELIC'].to_frame().join(df_bcb['IPCA'], how='inner')
+        df_periodo = df_periodo.loc[(df_periodo.index >= data_juros_mes) & (df_periodo.index <= data_calc_mes)]
+        df_periodo['TAXA_LEGAL_RETROATIVA'] = (df_periodo['SELIC'] - df_periodo['IPCA']).clip(lower=0)
+        juros_acumulados = df_periodo['TAXA_LEGAL_RETROATIVA'].sum()
+        
+    return f_cm_total, juros_acumulados
+
 # --- 4. EXPORTAÇÃO PARA PDF ---
 def converter_para_pdf(caminho_xlsx):
     caminho_xlsx = Path(caminho_xlsx)
     pasta_saida = caminho_xlsx.parent
-    
     if platform.system() == "Windows":
         caminhos_lo = [r"C:\Program Files\LibreOffice\program\soffice.exe", r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"]
         lo_path = None
         for p in caminhos_lo:
             if os.path.exists(p):
-                lo_path = p
-                break
-        if not lo_path:
-            logging.warning("LibreOffice não encontrado no Windows. PDF não será gerado automaticamente.")
-            return False
+                lo_path = p; break
+        if not lo_path: return False
         comando = [lo_path, "--headless", "--convert-to", "pdf", "--outdir", str(pasta_saida), str(caminho_xlsx)]
     else:
         comando = ["libreoffice", "--headless", "--convert-to", "pdf", "--outdir", str(pasta_saida), str(caminho_xlsx)]
         
     try:
         subprocess.run(comando, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logging.info(f"PDF gerado com sucesso: {caminho_xlsx.with_suffix('.pdf').name}")
         return True
-    except Exception as e:
-        logging.error(f"Erro ao converter {caminho_xlsx.name} para PDF: {e}")
-        return False
+    except: return False
 
 # --- 5. PROCESSAMENTO CENTRAL ---
 def executar_nash(caminho_entrada, arquivo_saida):
+    preload_heavy_libs() # Garante carregamento caso o usuário tenha sido mais rápido que a thread
     tabela_tjmg = carregar_tjmg()
     xls = pd.ExcelFile(caminho_entrada)
     if not all(aba in xls.sheet_names for aba in ['Parametros', 'Danos', 'Custas']): raise Exception("Arquivo inválido. Faltam abas obrigatórias.")
@@ -174,7 +206,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         except: return 1.0
 
     processo = str(get_param('Processo', 'N/A'))
-    atuacao = str(get_param('Atuação', 'RÉU')).strip().upper() # NOVO: AUTOR ou RÉU
+    atuacao = str(get_param('Atuação', 'RÉU')).strip().upper() 
     data_transito_c, teve_transito = get_param('Data do Trânsito', is_date=True), pd.notna(get_param('Data do Trânsito', is_date=True))
     data_sentenca = get_param('Data da Sentença', is_date=True)
     jg = str(get_param('Justiça Gratuita', '')).strip().upper() == 'SIM'
@@ -215,6 +247,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         elif regra_txt == 'R4': df_danos.at[idx, 'Desc_Regra'] = "TJMG + 1% até 08/24; após, Lei 14.905"
         elif regra_txt == 'R5': df_danos.at[idx, 'Desc_Regra'] = "Selic até 08/24; após, Lei 14.905"
         elif regra_txt == 'R6': df_danos.at[idx, 'Desc_Regra'] = "Lei 14.905/24"
+        elif regra_txt == 'R7': df_danos.at[idx, 'Desc_Regra'] = "TJMG(CM); Taxa Legal Retroativa (Juros)"
         else: df_danos.at[idx, 'Desc_Regra'] = regra_txt if regra_txt else "Selic"
         
     for idx, row in df_custas.iterrows(): df_custas.at[idx, 'Desc_Regra'] = "IPCA+TL (Trânsito)" if teve_transito else "IPCA (S/ Juros)"
@@ -234,7 +267,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
         valor = float(row['Valor Histórico'])
         regra = str(row.get('Regra', '')).strip().upper()
         
-        # SUPORTE A MARCOS INDIVIDUAIS (CORREÇÃO VS JUROS SEPARADOS NA LINHA)
         data_juros_base = data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_cm
         data_juros = pd.to_datetime(row['Data Juros'], dayfirst=True, errors='coerce') if 'Data Juros' in row and pd.notna(row['Data Juros']) else data_juros_base
             
@@ -242,6 +274,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         elif regra == 'R1': f_cm, f_jur = calc_tjmg_juros(tabela_tjmg, data_cm, data_juros, data_calculo)
         elif regra == 'R4': f_cm, f_jur = calc_tjmg_leinova(tabela_tjmg, df_bcb, data_cm, data_juros, data_calculo)
         elif regra == 'R6': f_cm, f_jur = calc_leinova_pura(df_bcb, data_cm, data_juros, data_calculo)
+        elif regra == 'R7': f_cm, f_jur = calc_tjmg_taxalegal_retroativa(tabela_tjmg, df_bcb, data_cm, data_juros, data_calculo)
         else: f_cm, f_jur = calc_selic_pura(df_bcb, data_cm, data_juros, data_calculo)
 
         val_princ = valor * f_cm
@@ -250,7 +283,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
         df_danos.at[idx, 'Fator CM'] = f_cm
         df_danos.at[idx, 'Fator Juros'] = f_jur
         
-        # CÁLCULO DE ÊXITO APENAS SE ESTIVERMOS PELA DEFESA/RÉU
         v_pedido = float(row['Valor Pedido Inicial'])
         if 'AUTOR' not in atuacao and v_pedido > 0 and pd.notna(row['Data do Pedido']):
             data_ped = row['Data do Pedido']
@@ -258,6 +290,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
             elif regra == 'R1': f_cm_ped, f_jur_ped = calc_tjmg_juros(tabela_tjmg, data_ped, data_juros, data_calculo)
             elif regra == 'R4': f_cm_ped, f_jur_ped = calc_tjmg_leinova(tabela_tjmg, df_bcb, data_ped, data_juros, data_calculo)
             elif regra == 'R6': f_cm_ped, f_jur_ped = calc_leinova_pura(df_bcb, data_ped, data_juros, data_calculo)
+            elif regra == 'R7': f_cm_ped, f_jur_ped = calc_tjmg_taxalegal_retroativa(tabela_tjmg, df_bcb, data_ped, data_juros, data_calculo)
             else: f_cm_ped, f_jur_ped = calc_selic_pura(df_bcb, data_ped, data_juros, data_calculo)
             
             risco_princ = v_pedido * f_cm_ped
@@ -317,12 +350,14 @@ def executar_nash(caminho_entrada, arquivo_saida):
             if pd.isna(data_cm) or data_cm > data_corte: continue
             valor = float(row['Valor Histórico'])
             regra = str(row.get('Regra', '')).strip().upper()
-            data_juros = data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_cm
+            data_juros_base = data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_cm
+            data_juros = pd.to_datetime(row['Data Juros'], dayfirst=True, errors='coerce') if 'Data Juros' in row and pd.notna(row['Data Juros']) else data_juros_base
                 
             if is_fazenda: f_cm, f_jur = calc_fazenda_publica(df_bcb, data_cm, data_juros, data_corte)
             elif regra == 'R1': f_cm, f_jur = calc_tjmg_juros(tabela_tjmg, data_cm, data_juros, data_corte)
             elif regra == 'R4': f_cm, f_jur = calc_tjmg_leinova(tabela_tjmg, df_bcb, data_cm, data_juros, data_corte)
             elif regra == 'R6': f_cm, f_jur = calc_leinova_pura(df_bcb, data_cm, data_juros, data_corte)
+            elif regra == 'R7': f_cm, f_jur = calc_tjmg_taxalegal_retroativa(tabela_tjmg, df_bcb, data_cm, data_juros, data_corte)
             else: f_cm, f_jur = calc_selic_pura(df_bcb, data_cm, data_juros, data_corte)
             
             val_princ = valor * f_cm
@@ -416,7 +451,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
         total_final_processo = saldo_principal + saldo_juros
         gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, 0, 0, 0, 0, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico_cg, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
-    # GERA EXITO APENAS SE FOR RÉU/DEFESA
     if 'AUTOR' not in atuacao and 'Risco Atual' in df_danos.columns and df_danos['Risco Atual'].sum() > 0:
         gerar_relatorio_exito_cliente(processo, df_danos[df_danos['Risco Atual'] > 0], arquivo_saida)
 
@@ -671,6 +705,9 @@ class NashGUI:
         if icone_path.exists():
             try: self.root.iconbitmap(str(icone_path))
             except: pass
+            
+        # Inicia o carregamento das bibliotecas pesadas de forma invisível
+        threading.Thread(target=preload_heavy_libs, daemon=True).start()
 
         tk.Label(root, text="NASH SYSTEM", font=("Arial", 16, "bold")).pack(pady=(0, 5))
         tk.Label(root, text="Assistente de Cálculos Judiciais", font=("Arial", 10, "italic")).pack(pady=(0, 15))
@@ -729,6 +766,13 @@ class NashGUI:
             self.root.after(0, erro)
 
 if __name__ == "__main__":
+    # Trava de Instância Única (Impede o usuário de abrir várias vezes)
+    if platform.system() == "Windows":
+        import ctypes
+        mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "NashSystem_Unico_Mutex")
+        if ctypes.windll.kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
+            sys.exit(0)
+
     app = tk.Tk()
     gui = NashGUI(app)
     app.mainloop()
