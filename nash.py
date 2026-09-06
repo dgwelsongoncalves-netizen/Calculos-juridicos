@@ -9,7 +9,7 @@ import platform
 import subprocess
 from pathlib import Path
 
-__version__ = "2.8.6" # Add: Lazy Loading (Performance Background) + Trava Instância Única Mutex
+__version__ = "2.8.7" # Add: Ajuste margens PDF e Subtotais em Danos e Custas
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -499,6 +499,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center")
     linha += 1
 
+    subtotal_danos = 0.0
     for _, r in df_danos.iterrows():
         exibe_data = r['Data Desembolso'].strftime('%d/%m/%Y') if float(r['Valor Histórico']) > 0 else "-" 
         ws.cell(row=linha, column=1, value=r['ID / Folha']).border = borda
@@ -509,10 +510,21 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         ws.cell(row=linha, column=6, value=r.get('Fator Juros', 0.0)).number_format = '0.00%'; ws.cell(row=linha, column=6).border = borda
         ws.cell(row=linha, column=7, value=r.get('Desc_Regra', '')).border = borda
         val_display = r['Valor Histórico'] if historico else r['Valor Atualizado']
+        subtotal_danos += val_display
         ws.cell(row=linha, column=8, value=val_display).number_format = moeda; ws.cell(row=linha, column=8).border = borda
         linha += 1
 
-    linha += 1
+    # Inserção da linha de Subtotal dos Danos
+    ws.merge_cells(f'A{linha}:G{linha}')
+    ws.cell(row=linha, column=1, value="Subtotal Danos Materiais:").alignment = Alignment(horizontal="right")
+    ws.cell(row=linha, column=1).font = f_negrito
+    ws.cell(row=linha, column=1).fill = fundo_cinza
+    ws.cell(row=linha, column=8, value=subtotal_danos).number_format = moeda
+    ws.cell(row=linha, column=8).font = f_negrito
+    ws.cell(row=linha, column=8).fill = fundo_cinza
+    for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
+    linha += 2
+
     ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "2. CUSTAS E DESPESAS PROCESSUAIS"
     ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
     
@@ -523,6 +535,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center")
     linha += 1
     
+    subtotal_custas = 0.0
     for _, r in df_custas.iterrows():
         ws.cell(row=linha, column=1, value=r['ID / Folha']).border = borda
         ws.cell(row=linha, column=2, value=r['Descrição']).border = borda
@@ -532,9 +545,20 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         ws.cell(row=linha, column=6, value=r.get('Fator Juros', 0.0)).number_format = '0.00%'; ws.cell(row=linha, column=6).border = borda
         ws.cell(row=linha, column=7, value=r.get('Desc_Regra', '')).border = borda
         val_display_c = r['Valor Histórico'] if (historico and not jg) else r.get('Exigível', 0.0)
-        ws.cell(row=linha, column=8, value=0.0 if jg else val_display_c).number_format = moeda; ws.cell(row=linha, column=8).border = borda
+        valor_final_c = 0.0 if jg else val_display_c
+        subtotal_custas += valor_final_c
+        ws.cell(row=linha, column=8, value=valor_final_c).number_format = moeda; ws.cell(row=linha, column=8).border = borda
         linha += 1
 
+    # Inserção da linha de Subtotal das Custas
+    ws.merge_cells(f'A{linha}:G{linha}')
+    ws.cell(row=linha, column=1, value="Subtotal Custas:").alignment = Alignment(horizontal="right")
+    ws.cell(row=linha, column=1).font = f_negrito
+    ws.cell(row=linha, column=1).fill = fundo_cinza
+    ws.cell(row=linha, column=8, value=subtotal_custas).number_format = moeda
+    ws.cell(row=linha, column=8).font = f_negrito
+    ws.cell(row=linha, column=8).fill = fundo_cinza
+    for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
     linha += 2
 
     if historico:
@@ -596,7 +620,8 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
             add_total("Multa Art. 523 CPC (10%):", multa); add_total("Honorários Art. 523 CPC (10%):", hon_523)
         add_total("TOTAL GERAL DEVIDO:", total, True, True)
 
-    larguras_minimas = {'A': 16, 'B': 28, 'C': 16, 'D': 16, 'E': 14, 'F': 12, 'G': 18, 'H': 20}
+    # AQUI CORRIGIMOS O CORTE DO PDF! As larguras foram expandidas significativamente (A e G)
+    larguras_minimas = {'A': 35, 'B': 28, 'C': 14, 'D': 16, 'E': 14, 'F': 12, 'G': 32, 'H': 20}
     for letra_col, larg_min in larguras_minimas.items():
         ws.column_dimensions[letra_col].width = larg_min
     
