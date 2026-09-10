@@ -9,7 +9,7 @@ import platform
 import subprocess
 from pathlib import Path
 
-__version__ = "2.8.7" # Add: Ajuste margens PDF e Subtotais em Danos e Custas
+__version__ = "2.8.10" # Add: Sistema de Cache Local para API do Banco Central (Blindagem contra Erro 502)
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -37,6 +37,7 @@ else:
 
 PASTA_TABELAS = PASTA_APP / 'Tabelas_Oficiais'
 ARQUIVO_TJMG = PASTA_TABELAS / 'tabela_tjmg.xlsx'
+ARQUIVO_CACHE_BCB = PASTA_TABELAS / 'cache_bcb.csv'
 
 ARQUIVO_LOG = PASTA_APP / "nash_system.log"
 logging.basicConfig(filename=ARQUIVO_LOG, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%d/%m/%Y %H:%M:%S", encoding="utf-8")
@@ -60,17 +61,48 @@ def carregar_taxas_bcb(data_minima):
         str_data_inicio = '2010-01-01' if pd.isna(data_minima) else f"{data_minima.year}-{data_minima.month:02d}-01"
         df_selic = sgs.get({'SELIC': 4390}, start=str_data_inicio).apply(pd.to_numeric, errors='coerce').fillna(0) / 100.0
         df_selic.index = df_selic.index.to_period('M').to_timestamp()
+        
         df_ipca = sgs.get({'IPCA': 433}, start=str_data_inicio).apply(pd.to_numeric, errors='coerce').fillna(0) / 100.0
         df_ipca.index = df_ipca.index.to_period('M').to_timestamp()
+        
         inicio_tl = max(pd.to_datetime('2024-08-01'), pd.to_datetime(str_data_inicio))
         df_tl = sgs.get({'TAXA_LEGAL': 29543}, start=inicio_tl.strftime('%Y-%m-%d')).apply(pd.to_numeric, errors='coerce').fillna(0) / 100.0
         df_tl.index = df_tl.index.to_period('M').to_timestamp()
+        
         df_ipca_e = sgs.get({'IPCA_E': 10764}, start=str_data_inicio).apply(pd.to_numeric, errors='coerce').fillna(0) / 100.0
         df_ipca_e.index = df_ipca_e.index.to_period('M').to_timestamp()
+        
         df_poup = sgs.get({'POUPANCA': 195}, start=str_data_inicio).resample('MS').first().apply(pd.to_numeric, errors='coerce').fillna(0) / 100.0
         df_poup.index = df_poup.index.to_period('M').to_timestamp()
+        
+        # Salva o cache de segurança local
+        try:
+            PASTA_TABELAS.mkdir(parents=True, exist_ok=True)
+            df_cache = pd.concat([df_selic, df_ipca, df_tl, df_ipca_e, df_poup], axis=1)
+            df_cache.to_csv(ARQUIVO_CACHE_BCB)
+            logging.info("Cache das taxas do Banco Central atualizado com sucesso.")
+        except Exception as e_cache:
+            logging.warning(f"Não foi possível salvar o cache do BCB: {e_cache}")
+            
         return {'SELIC': df_selic, 'IPCA': df_ipca, 'TAXA_LEGAL': df_tl, 'IPCA_E': df_ipca_e, 'POUPANCA': df_poup}
-    except Exception as e: raise Exception(f"Sem conexão API do Banco Central.\nDetalhe: {e}")
+        
+    except Exception as e:
+        # Se a API do BCB falhar (ex: Erro 502), tentamos puxar o cache local
+        if ARQUIVO_CACHE_BCB.exists():
+            try:
+                logging.info(f"Falha na API do BCB ({e}). Carregando taxas a partir do cache local.")
+                df_cache = pd.read_csv(ARQUIVO_CACHE_BCB, index_col=0, parse_dates=True)
+                return {
+                    'SELIC': df_cache[['SELIC']].dropna(),
+                    'IPCA': df_cache[['IPCA']].dropna(),
+                    'TAXA_LEGAL': df_cache[['TAXA_LEGAL']].dropna(),
+                    'IPCA_E': df_cache[['IPCA_E']].dropna(),
+                    'POUPANCA': df_cache[['POUPANCA']].dropna()
+                }
+            except Exception as e_cache_read:
+                raise Exception(f"Sem conexão com BCB e falha ao ler o cache de segurança.\nErro BCB: {e}\nErro Cache: {e_cache_read}")
+        else:
+            raise Exception(f"Sem conexão API do Banco Central e não há cache local disponível.\nDetalhe: {e}")
     
 def obter_fator_tjmg(df_tjmg, data_inicio, data_fim):
     if df_tjmg is None: return 1.0
@@ -108,7 +140,10 @@ def calc_tjmg_leinova(df_tjmg, df_bcb, data_cm, data_juros, data_calculo):
     if data_calc_mes > corte_mes and df_bcb is not None:
         f_cm_2 = (1 + df_bcb['IPCA'].loc[(df_bcb['IPCA'].index > corte_mes) & (df_bcb['IPCA'].index <= data_calc_mes), 'IPCA']).prod()
         if pd.notna(data_juros) and data_juros <= data_calculo:
-            jur_2 = df_bcb['TAXA_LEGAL'].loc[(df_bcb['TAXA_LEGAL'].index > max(corte_mes, pd.to_datetime(f"{data_juros.year}-{data_juros.month:02d}-01"))) & (df_bcb['TAXA_LEGAL'].index <= data_calc_mes), 'TAXA_LEGAL'].sum()
+            df_p = df_bcb['SELIC'].join(df_bcb['IPCA'], how='inner')
+            df_p = df_p.loc[(df_p.index > max(corte_mes, pd.to_datetime(f"{data_juros.year}-{data_juros.month:02d}-01"))) & (df_p.index <= data_calc_mes)]
+            df_p['TAXA_LEGAL'] = (df_p['SELIC'] - df_p['IPCA']).clip(lower=0)
+            jur_2 = df_p['TAXA_LEGAL'].sum()
     return f_cm_1 * f_cm_2, jur_1 + jur_2
 
 def calc_fazenda_publica(df_bcb, data_cm, data_juros, data_calculo):
@@ -136,7 +171,15 @@ def calc_leinova_pura(df_bcb, data_cm, data_juros, data_calculo):
     if df_bcb is None: return 1.0, 0.0
     d_cm_m, d_calc_m = pd.to_datetime(f"{data_cm.year}-{data_cm.month:02d}-01"), pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
     f_ipca = (1 + df_bcb['IPCA'].loc[(df_bcb['IPCA'].index >= d_cm_m) & (df_bcb['IPCA'].index <= d_calc_m), 'IPCA']).prod()
-    juros = df_bcb['TAXA_LEGAL'].loc[(df_bcb['TAXA_LEGAL'].index >= pd.to_datetime(f"{data_juros.year}-{data_juros.month:02d}-01")) & (df_bcb['TAXA_LEGAL'].index <= d_calc_m), 'TAXA_LEGAL'].sum() if pd.notna(data_juros) and data_juros <= data_calculo else 0.0
+    
+    juros = 0.0
+    if df_bcb is not None and pd.notna(data_juros) and data_juros <= data_calculo:
+        d_jur_m = pd.to_datetime(f"{data_juros.year}-{data_juros.month:02d}-01")
+        df_periodo = df_bcb['SELIC'].join(df_bcb['IPCA'], how='inner')
+        df_periodo = df_periodo.loc[(df_periodo.index >= d_jur_m) & (df_periodo.index <= d_calc_m)]
+        df_periodo['TAXA_LEGAL_RETROATIVA'] = (df_periodo['SELIC'] - df_periodo['IPCA']).clip(lower=0)
+        juros = df_periodo['TAXA_LEGAL_RETROATIVA'].sum()
+        
     return f_ipca, juros
 
 def calc_tjmg_taxalegal_retroativa(df_tjmg, df_bcb, data_cm, data_juros, data_calculo):
@@ -157,7 +200,7 @@ def calc_tjmg_taxalegal_retroativa(df_tjmg, df_bcb, data_cm, data_juros, data_ca
     
     if df_bcb is not None and pd.notna(data_juros) and data_juros <= data_calculo:
         data_juros_mes = pd.to_datetime(f"{data_juros.year}-{data_juros.month:02d}-01")
-        df_periodo = df_bcb['SELIC'].to_frame().join(df_bcb['IPCA'], how='inner')
+        df_periodo = df_bcb['SELIC'].join(df_bcb['IPCA'], how='inner')
         df_periodo = df_periodo.loc[(df_periodo.index >= data_juros_mes) & (df_periodo.index <= data_calc_mes)]
         df_periodo['TAXA_LEGAL_RETROATIVA'] = (df_periodo['SELIC'] - df_periodo['IPCA']).clip(lower=0)
         juros_acumulados = df_periodo['TAXA_LEGAL_RETROATIVA'].sum()
@@ -458,7 +501,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, 0, 0, 0, 0, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico_cg, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
     if 'AUTOR' not in atuacao and 'Risco Atual' in df_danos.columns and df_danos['Risco Atual'].sum() > 0:
-        gerar_relatorio_exito_cliente(processo, df_danos[df_danos['Risco Atual'] > 0], arquivo_saida)
+        gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida)
 
 # --- 6. GERAÇÕES DE ARQUIVOS (LAUDO E ÊXITO) ---
 def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo):
@@ -507,7 +550,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
 
     subtotal_danos = 0.0
     for _, r in df_danos.iterrows():
-        exibe_data = r['Data Desembolso'].strftime('%d/%m/%Y') if float(r['Valor Histórico']) > 0 else "-" 
+        exibe_data = r['Data Desembolso'].strftime('%d/%m/%Y') if float(r['Valor Histórico']) > 0 and pd.notna(r['Data Desembolso']) else "-" 
         ws.cell(row=linha, column=1, value=r['ID / Folha']).border = borda
         ws.cell(row=linha, column=2, value=r['Descrição']).border = borda
         ws.cell(row=linha, column=3, value=exibe_data).border = borda
@@ -545,7 +588,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     for _, r in df_custas.iterrows():
         ws.cell(row=linha, column=1, value=r['ID / Folha']).border = borda
         ws.cell(row=linha, column=2, value=r['Descrição']).border = borda
-        ws.cell(row=linha, column=3, value=r['Data Desembolso'].strftime('%d/%m/%Y')).border = borda
+        ws.cell(row=linha, column=3, value=r['Data Desembolso'].strftime('%d/%m/%Y') if pd.notna(r['Data Desembolso']) else "-").border = borda
         ws.cell(row=linha, column=4, value=r['Valor Histórico']).number_format = moeda; ws.cell(row=linha, column=4).border = borda
         ws.cell(row=linha, column=5, value=r.get('Fator CM', 1.0)).number_format = '0.0000000'; ws.cell(row=linha, column=5).border = borda
         ws.cell(row=linha, column=6, value=r.get('Fator Juros', 0.0)).number_format = '0.00%'; ws.cell(row=linha, column=6).border = borda
