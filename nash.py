@@ -214,7 +214,13 @@ def executar_nash(caminho_entrada, arquivo_saida):
     is_fazenda = str(get_param('Fazenda Pública', 'NÃO')).strip().upper() == 'SIM'
     if is_fazenda: houve_inadimplemento = False
         
-    hon_perc, hon_fixo = float(get_param('Honorários Sucumbência', 0.0)) / 100, float(get_param('Honorários Fixos (R$)', 0.0))
+    val_hon = get_param('Honorários Sucumbência', 0.0)
+    try:
+        hon_perc = float(str(val_hon).replace('%', '').replace(',', '.'))
+        hon_perc = hon_perc / 100.0 if hon_perc >= 1 else hon_perc
+    except:
+        hon_perc = 0.0
+    hon_fixo = float(get_param('Honorários Fixos (R$)', 0.0))
     termo_juros_raw = str(get_param('Termo Inicial Juros', 'DESEMBOLSO')).strip().upper()
     data_citacao, data_evento = get_param('Data da Citação', is_date=True), get_param('Data do Evento', is_date=True)
 
