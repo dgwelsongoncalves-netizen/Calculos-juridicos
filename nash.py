@@ -9,7 +9,7 @@ import platform
 import subprocess
 from pathlib import Path
 
-__version__ = "2.8.10" # Add: Sistema de Cache Local para API do Banco Central (Blindagem contra Erro 502)
+__version__ = "2.8.14" # Fix: Bug visual da tabela, correção monetária sobre juros na CG e trava de datas inválidas
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -75,7 +75,6 @@ def carregar_taxas_bcb(data_minima):
         df_poup = sgs.get({'POUPANCA': 195}, start=str_data_inicio).resample('MS').first().apply(pd.to_numeric, errors='coerce').fillna(0) / 100.0
         df_poup.index = df_poup.index.to_period('M').to_timestamp()
         
-        # Salva o cache de segurança local
         try:
             PASTA_TABELAS.mkdir(parents=True, exist_ok=True)
             df_cache = pd.concat([df_selic, df_ipca, df_tl, df_ipca_e, df_poup], axis=1)
@@ -87,7 +86,6 @@ def carregar_taxas_bcb(data_minima):
         return {'SELIC': df_selic, 'IPCA': df_ipca, 'TAXA_LEGAL': df_tl, 'IPCA_E': df_ipca_e, 'POUPANCA': df_poup}
         
     except Exception as e:
-        # Se a API do BCB falhar (ex: Erro 502), tentamos puxar o cache local
         if ARQUIVO_CACHE_BCB.exists():
             try:
                 logging.info(f"Falha na API do BCB ({e}). Carregando taxas a partir do cache local.")
@@ -103,7 +101,8 @@ def carregar_taxas_bcb(data_minima):
                 raise Exception(f"Sem conexão com BCB e falha ao ler o cache de segurança.\nErro BCB: {e}\nErro Cache: {e_cache_read}")
         else:
             raise Exception(f"Sem conexão API do Banco Central e não há cache local disponível.\nDetalhe: {e}")
-    
+
+# --- 3. MOTORES MATEMÁTICOS ---
 def obter_fator_tjmg(df_tjmg, data_inicio, data_fim):
     if df_tjmg is None: return 1.0
     d_ini = pd.to_datetime(f"{data_inicio.year}-{data_inicio.month:02d}-01")
@@ -115,7 +114,6 @@ def obter_fator_tjmg(df_tjmg, data_inicio, data_fim):
     except KeyError: idx_fim = float(df_tjmg['ÍNDICE'].iloc[-1])
     return idx_ini / idx_fim if idx_fim != 0 else 1.0
 
-# --- 3. MOTORES MATEMÁTICOS ---
 def calc_tjmg_juros(df_tjmg, data_cm, data_juros, data_calculo):
     fator_cm = obter_fator_tjmg(df_tjmg, data_cm, data_calculo)
     fator_juros = max(0, (data_calculo.year - data_juros.year) * 12 + (data_calculo.month - data_juros.month)) * 0.01 if pd.notna(data_juros) and data_juros <= data_calculo else 0.0
@@ -129,6 +127,21 @@ def calc_selic_pura(df_bcb, data_cm, data_juros, data_calculo):
     fator_ipca = (1 + df_bcb['IPCA'].loc[(df_bcb['IPCA'].index >= data_cm_mes) & (df_bcb['IPCA'].index < data_juros_mes), 'IPCA']).prod() if data_cm_mes < data_juros_mes else 1.0
     fator_selic = (1 + df_bcb['SELIC'].loc[(df_bcb['SELIC'].index >= max(data_cm_mes, data_juros_mes)) & (df_bcb['SELIC'].index <= data_calc_mes), 'SELIC']).prod()
     return fator_ipca, (fator_selic - 1.0)
+
+def calc_tjmg_juros_selic(df_tjmg, df_bcb, data_cm, data_juros, data_calculo):
+    data_corte, corte_mes = pd.to_datetime("2024-08-30"), pd.to_datetime("2024-08-01")
+    if data_cm >= data_corte: return calc_selic_pura(df_bcb, data_cm, data_juros, data_calculo)
+    
+    f_cm_1 = obter_fator_tjmg(df_tjmg, data_cm, data_corte)
+    jur_1 = max(0, (data_corte.year - data_juros.year) * 12 + (data_corte.month - data_juros.month)) * 0.01 if pd.notna(data_juros) and data_juros < data_corte else 0.0
+    
+    data_calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
+    f_cm_2 = 1.0
+    if data_calc_mes > corte_mes and df_bcb is not None:
+        inicio_selic = corte_mes + pd.DateOffset(months=1)
+        f_cm_2 = (1 + df_bcb['SELIC'].loc[(df_bcb['SELIC'].index >= inicio_selic) & (df_bcb['SELIC'].index <= data_calc_mes), 'SELIC']).prod()
+        
+    return f_cm_1 * f_cm_2, jur_1
 
 def calc_tjmg_leinova(df_tjmg, df_bcb, data_cm, data_juros, data_calculo):
     data_corte, corte_mes = pd.to_datetime("2024-08-30"), pd.to_datetime("2024-08-01")
@@ -145,6 +158,36 @@ def calc_tjmg_leinova(df_tjmg, df_bcb, data_cm, data_juros, data_calculo):
             df_p['TAXA_LEGAL'] = (df_p['SELIC'] - df_p['IPCA']).clip(lower=0)
             jur_2 = df_p['TAXA_LEGAL'].sum()
     return f_cm_1 * f_cm_2, jur_1 + jur_2
+
+def calc_selic_leinova(df_bcb, data_cm, data_juros, data_calculo):
+    if df_bcb is None: return 1.0, 0.0
+    corte, corte_mes = pd.to_datetime("2024-08-30"), pd.to_datetime("2024-08-01")
+    if data_cm >= corte: return calc_leinova_pura(df_bcb, data_cm, data_juros, data_calculo)
+        
+    data_cm_mes = pd.to_datetime(f"{data_cm.year}-{data_cm.month:02d}-01")
+    data_calc_mes = pd.to_datetime(f"{data_calculo.year}-{data_calculo.month:02d}-01")
+    d_jur_m = pd.to_datetime(f"{data_juros.year}-{data_juros.month:02d}-01") if pd.notna(data_juros) else pd.NaT
+    
+    f_cm_1 = 1.0
+    if pd.notna(d_jur_m) and data_cm_mes < d_jur_m:
+        f_cm_1 = (1 + df_bcb['IPCA'].loc[(df_bcb['IPCA'].index >= data_cm_mes) & (df_bcb['IPCA'].index < d_jur_m), 'IPCA']).prod()
+        f_cm_1 *= (1 + df_bcb['SELIC'].loc[(df_bcb['SELIC'].index >= d_jur_m) & (df_bcb['SELIC'].index <= corte_mes), 'SELIC']).prod()
+    else:
+        f_cm_1 = (1 + df_bcb['SELIC'].loc[(df_bcb['SELIC'].index >= data_cm_mes) & (df_bcb['SELIC'].index <= corte_mes), 'SELIC']).prod()
+        
+    f_cm_2, jur_2 = 1.0, 0.0
+    if data_calc_mes > corte_mes:
+        f_cm_2 = (1 + df_bcb['IPCA'].loc[(df_bcb['IPCA'].index > corte_mes) & (df_bcb['IPCA'].index <= data_calc_mes), 'IPCA']).prod()
+        inicio_jur_2 = corte_mes + pd.DateOffset(months=1)
+        if pd.notna(data_juros):
+            inicio_jur_2 = max(inicio_jur_2, d_jur_m)
+            if inicio_jur_2 <= data_calc_mes:
+                df_p = df_bcb['SELIC'].join(df_bcb['IPCA'], how='inner')
+                df_p = df_p.loc[(df_p.index >= inicio_jur_2) & (df_p.index <= data_calc_mes)]
+                df_p['TAXA_LEGAL'] = (df_p['SELIC'] - df_p['IPCA']).clip(lower=0)
+                jur_2 = df_p['TAXA_LEGAL'].sum()
+                
+    return f_cm_1 * f_cm_2, jur_2
 
 def calc_fazenda_publica(df_bcb, data_cm, data_juros, data_calculo):
     if df_bcb is None: return 1.0, 0.0
@@ -229,18 +272,32 @@ def converter_para_pdf(caminho_xlsx):
 
 # --- 5. PROCESSAMENTO CENTRAL ---
 def executar_nash(caminho_entrada, arquivo_saida):
-    preload_heavy_libs() # Garante carregamento caso o usuário tenha sido mais rápido que a thread
+    preload_heavy_libs()
     tabela_tjmg = carregar_tjmg()
     xls = pd.ExcelFile(caminho_entrada)
     if not all(aba in xls.sheet_names for aba in ['Parametros', 'Danos', 'Custas']): raise Exception("Arquivo inválido. Faltam abas obrigatórias.")
 
     df_param = pd.read_excel(xls, sheet_name='Parametros', header=None, index_col=0)
+    
     def get_param(nome, default=None, is_date=False):
         try:
             val = df_param.loc[nome, 1]
-            if pd.isna(val) or str(val).strip() == '': return default
-            return pd.to_datetime(val, dayfirst=True) if is_date else val
-        except KeyError: return default
+        except KeyError: 
+            return default
+            
+        if pd.isna(val) or str(val).strip() == '': 
+            return default
+            
+        if is_date:
+            try:
+                dt = pd.to_datetime(val, dayfirst=True)
+                if dt.year < 1900 or dt.year > 2100:
+                    raise ValueError
+                return dt
+            except Exception:
+                raise Exception(f"Data inválida no campo '{nome}' da aba Parâmetros.\n\nValor encontrado: {val}\n\nVerifique se o ano possui 4 dígitos (exemplo: 2026 em vez de 202) e tente novamente.")
+                
+        return val
 
     def parse_percent(val):
         try:
@@ -275,13 +332,17 @@ def executar_nash(caminho_entrada, arquivo_saida):
     df_danos = pd.read_excel(xls, sheet_name='Danos').dropna(subset=['Descrição'], how='any')
     df_danos['Valor Histórico'] = pd.to_numeric(df_danos['Valor Histórico'], errors='coerce').fillna(0.0)
     df_danos['Valor Pedido Inicial'] = pd.to_numeric(df_danos.get('Valor Pedido Inicial', 0), errors='coerce').fillna(0.0)
-    df_danos['Data Desembolso'] = pd.to_datetime(df_danos.get('Data Desembolso', pd.NaT), format='mixed', dayfirst=True, errors='coerce')
-    df_danos['Data do Pedido'] = pd.to_datetime(df_danos.get('Data do Pedido', pd.NaT), format='mixed', dayfirst=True, errors='coerce')
+    try:
+        df_danos['Data Desembolso'] = pd.to_datetime(df_danos.get('Data Desembolso', pd.NaT), format='mixed', dayfirst=True, errors='coerce')
+        df_danos['Data do Pedido'] = pd.to_datetime(df_danos.get('Data do Pedido', pd.NaT), format='mixed', dayfirst=True, errors='coerce')
+    except: pass
     
     df_danos.loc[(df_danos['Valor Histórico'] == 0) & (df_danos['Data Desembolso'].isna()), 'Data Desembolso'] = df_danos['Data do Pedido']
     
     df_custas = pd.read_excel(xls, sheet_name='Custas').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
-    df_custas['Data Desembolso'] = pd.to_datetime(df_custas['Data Desembolso'], format='mixed', dayfirst=True, errors='coerce')
+    try:
+        df_custas['Data Desembolso'] = pd.to_datetime(df_custas['Data Desembolso'], format='mixed', dayfirst=True, errors='coerce')
+    except: pass
     
     datas = pd.concat([df_danos['Data Desembolso'], df_custas['Data Desembolso'], pd.Series([data_citacao, data_evento, data_propositura])]).dropna()
     df_bcb = carregar_taxas_bcb(datas.min() if not datas.empty else pd.NaT)
@@ -321,7 +382,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
             
         if is_fazenda: f_cm, f_jur = calc_fazenda_publica(df_bcb, data_cm, data_juros, data_calculo)
         elif regra == 'R1': f_cm, f_jur = calc_tjmg_juros(tabela_tjmg, data_cm, data_juros, data_calculo)
+        elif regra == 'R3': f_cm, f_jur = calc_tjmg_juros_selic(tabela_tjmg, df_bcb, data_cm, data_juros, data_calculo)
         elif regra == 'R4': f_cm, f_jur = calc_tjmg_leinova(tabela_tjmg, df_bcb, data_cm, data_juros, data_calculo)
+        elif regra == 'R5': f_cm, f_jur = calc_selic_leinova(df_bcb, data_cm, data_juros, data_calculo)
         elif regra == 'R6': f_cm, f_jur = calc_leinova_pura(df_bcb, data_cm, data_juros, data_calculo)
         elif regra == 'R7': f_cm, f_jur = calc_tjmg_taxalegal_retroativa(tabela_tjmg, df_bcb, data_cm, data_juros, data_calculo)
         else: f_cm, f_jur = calc_selic_pura(df_bcb, data_cm, data_juros, data_calculo)
@@ -337,7 +400,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
             data_ped = row['Data do Pedido']
             if is_fazenda: f_cm_ped, f_jur_ped = calc_fazenda_publica(df_bcb, data_ped, data_juros, data_calculo)
             elif regra == 'R1': f_cm_ped, f_jur_ped = calc_tjmg_juros(tabela_tjmg, data_ped, data_juros, data_calculo)
+            elif regra == 'R3': f_cm_ped, f_jur_ped = calc_tjmg_juros_selic(tabela_tjmg, df_bcb, data_ped, data_juros, data_calculo)
             elif regra == 'R4': f_cm_ped, f_jur_ped = calc_tjmg_leinova(tabela_tjmg, df_bcb, data_ped, data_juros, data_calculo)
+            elif regra == 'R5': f_cm_ped, f_jur_ped = calc_selic_leinova(df_bcb, data_ped, data_juros, data_calculo)
             elif regra == 'R6': f_cm_ped, f_jur_ped = calc_leinova_pura(df_bcb, data_ped, data_juros, data_calculo)
             elif regra == 'R7': f_cm_ped, f_jur_ped = calc_tjmg_taxalegal_retroativa(tabela_tjmg, df_bcb, data_ped, data_juros, data_calculo)
             else: f_cm_ped, f_jur_ped = calc_selic_pura(df_bcb, data_ped, data_juros, data_calculo)
@@ -388,11 +453,21 @@ def executar_nash(caminho_entrada, arquivo_saida):
         gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, (subtotal_princ+subtotal_juros), (hon_exigivel_princ+hon_exigivel_juros), valor_multa, hon_523, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, [], base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
     else:
-        df_danos['Valor Atualizado'] = df_danos['Valor Histórico'] 
-        df_custas['Exigível'] = df_custas['Valor Histórico'] if not jg else 0.0
-        
         historico_cg = []; saldo_principal = 0.0; saldo_juros = 0.0
         data_corte = df_deducoes.iloc[0]['Data bloqueio/deposito']
+        regra_predominante = str(df_danos.iloc[0].get('Regra', 'R6')).strip().upper() if not df_danos.empty else 'R6'
+        if regra_predominante not in ['R1','R2','R3','R4','R5','R6','R7']:
+            if 'SELIC' in regra_predominante: regra_predominante = 'R2'
+        
+        def get_fator_acumulado(d_alvo):
+            if is_fazenda: return calc_fazenda_publica(df_bcb, data_corte, data_corte, d_alvo)
+            elif regra_predominante == 'R1': return calc_tjmg_juros(tabela_tjmg, data_corte, data_corte, d_alvo)
+            elif regra_predominante == 'R2': return calc_selic_pura(df_bcb, data_corte, data_corte, d_alvo)
+            elif regra_predominante == 'R3': return calc_tjmg_juros_selic(tabela_tjmg, df_bcb, data_corte, data_corte, d_alvo)
+            elif regra_predominante == 'R4': return calc_tjmg_leinova(tabela_tjmg, df_bcb, data_corte, data_corte, d_alvo)
+            elif regra_predominante == 'R5': return calc_selic_leinova(df_bcb, data_corte, data_corte, d_alvo)
+            elif regra_predominante == 'R7': return calc_tjmg_taxalegal_retroativa(tabela_tjmg, df_bcb, data_corte, data_corte, d_alvo)
+            else: return calc_leinova_pura(df_bcb, data_corte, data_corte, d_alvo)
         
         for idx, row in df_danos.iterrows():
             data_cm = row['Data Desembolso']
@@ -404,7 +479,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
                 
             if is_fazenda: f_cm, f_jur = calc_fazenda_publica(df_bcb, data_cm, data_juros, data_corte)
             elif regra == 'R1': f_cm, f_jur = calc_tjmg_juros(tabela_tjmg, data_cm, data_juros, data_corte)
+            elif regra == 'R3': f_cm, f_jur = calc_tjmg_juros_selic(tabela_tjmg, df_bcb, data_cm, data_juros, data_corte)
             elif regra == 'R4': f_cm, f_jur = calc_tjmg_leinova(tabela_tjmg, df_bcb, data_cm, data_juros, data_corte)
+            elif regra == 'R5': f_cm, f_jur = calc_selic_leinova(df_bcb, data_cm, data_juros, data_corte)
             elif regra == 'R6': f_cm, f_jur = calc_leinova_pura(df_bcb, data_cm, data_juros, data_corte)
             elif regra == 'R7': f_cm, f_jur = calc_tjmg_taxalegal_retroativa(tabela_tjmg, df_bcb, data_cm, data_juros, data_corte)
             else: f_cm, f_jur = calc_selic_pura(df_bcb, data_cm, data_juros, data_corte)
@@ -419,7 +496,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
             val_princ = (row['Valor Histórico'] * f_cm) * prop_custas
             saldo_principal += val_princ; saldo_juros += val_princ * f_jur
             
-        historico_cg.append((data_corte, "Subtotal (Principal + Juros)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
+        historico_cg.append((data_corte, "Atualização até 1º Bloqueio", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
         
         hon_suc_princ, hon_suc_jur = 0.0, 0.0
         if base_hon == 'VALOR DA CAUSA' and valor_causa > 0 and pd.notna(data_propositura) and not jg:
@@ -449,6 +526,21 @@ def executar_nash(caminho_entrada, arquivo_saida):
         historico_cg.append((data_corte, "DÍVIDA CONSOLIDADA (Pré-Bloqueio)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
         
         ultima_data = data_corte
+        
+        def avancar_tempo_cg(d_alvo):
+            nonlocal saldo_principal, saldo_juros, ultima_data
+            cm_T1, jur_T1 = get_fator_acumulado(ultima_data)
+            cm_T2, jur_T2 = get_fator_acumulado(d_alvo)
+            if regra_predominante in ['R2', 'SELIC']:
+                f_cm_delta = (1 + jur_T2) / (1 + jur_T1) if (1 + jur_T1) > 0 else 1.0
+                f_jur_delta = 0.0
+            else:
+                f_cm_delta = cm_T2 / cm_T1 if cm_T1 > 0 else 1.0
+                f_jur_delta = jur_T2 - jur_T1
+            saldo_principal = saldo_principal * f_cm_delta
+            saldo_juros = saldo_juros * f_cm_delta + saldo_principal * f_jur_delta
+            ultima_data = d_alvo
+            
         for _, row in df_deducoes.iterrows():
             data_ded = pd.to_datetime(row['Data bloqueio/deposito'])
             valor_ded = float(row['Valor'])
@@ -458,17 +550,13 @@ def executar_nash(caminho_entrada, arquivo_saida):
             despesas_tardias = df_danos[(df_danos['Data Desembolso'] > ultima_data) & (df_danos['Data Desembolso'] <= data_ded)]
             for _, nd in despesas_tardias.iterrows():
                 d_dano = nd['Data Desembolso']
-                f_cm, f_jur = calc_fazenda_publica(df_bcb, ultima_data, ultima_data, d_dano) if is_fazenda else calc_leinova_pura(df_bcb, ultima_data, ultima_data, d_dano) 
-                saldo_principal = saldo_principal * f_cm; saldo_juros += saldo_principal * f_jur
+                avancar_tempo_cg(d_dano)
                 saldo_principal += float(nd['Valor Histórico'])
                 historico_cg.append((d_dano, f"(+) Nova Inclusão: {nd['Descrição']}", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
-                ultima_data = d_dano
 
             if data_ded > ultima_data:
-                f_cm, f_jur = calc_fazenda_publica(df_bcb, ultima_data, ultima_data, data_ded) if is_fazenda else calc_leinova_pura(df_bcb, ultima_data, ultima_data, data_ded) 
-                saldo_principal = saldo_principal * f_cm; saldo_juros += saldo_principal * f_jur
+                avancar_tempo_cg(data_ded)
                 historico_cg.append((data_ded, "Atualização do Saldo", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
-                ultima_data = data_ded
             
             abate_juros = min(valor_ded, saldo_juros)
             saldo_juros -= abate_juros
@@ -486,22 +574,19 @@ def executar_nash(caminho_entrada, arquivo_saida):
         despesas_finais = df_danos[df_danos['Data Desembolso'] > ultima_data]
         for _, nd in despesas_finais.iterrows():
             d_dano = nd['Data Desembolso']
-            f_cm, f_jur = calc_fazenda_publica(df_bcb, ultima_data, ultima_data, d_dano) if is_fazenda else calc_leinova_pura(df_bcb, ultima_data, ultima_data, d_dano) 
-            saldo_principal = saldo_principal * f_cm; saldo_juros += saldo_principal * f_jur
+            avancar_tempo_cg(d_dano)
             saldo_principal += float(nd['Valor Histórico'])
             historico_cg.append((d_dano, f"(+) Nova Inclusão: {nd['Descrição']}", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
-            ultima_data = d_dano
 
         if ultima_data < data_calculo:
-            f_cm, f_jur = calc_fazenda_publica(df_bcb, ultima_data, ultima_data, data_calculo) if is_fazenda else calc_leinova_pura(df_bcb, ultima_data, ultima_data, data_calculo)
-            saldo_principal = saldo_principal * f_cm; saldo_juros += saldo_principal * f_jur
+            avancar_tempo_cg(data_calculo)
             historico_cg.append((data_calculo, "Atualização Final (Hoje)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
             
         total_final_processo = saldo_principal + saldo_juros
         gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, 0, 0, 0, 0, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico_cg, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
     if 'AUTOR' not in atuacao and 'Risco Atual' in df_danos.columns and df_danos['Risco Atual'].sum() > 0:
-        gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida)
+        gerar_relatorio_exito_cliente(processo, df_danos[df_danos['Risco Atual'] > 0], arquivo_saida)
 
 # --- 6. GERAÇÕES DE ARQUIVOS (LAUDO E ÊXITO) ---
 def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo):
@@ -541,7 +626,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "1. DANOS MATERIAIS E VALORES PRINCIPAIS"
     ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
 
-    cabs = ['ID / Folha', 'Descrição', 'Data', 'Valor Hist.', 'Fator Corr.', 'Juros (%)', 'Regra', 'Valor Atualizado']
+    cabs = ['ID / Folha', 'Descrição', 'Data', 'Valor Hist.', 'Fator Corr.', 'Juros (%)', 'Regra', 'Atualizado (Sem Abatimentos)' if historico else 'Valor Atualizado']
     for i, t in enumerate(cabs, 1): 
         ws.cell(row=linha, column=i, value=t).font = f_negrito
         ws.cell(row=linha, column=i).border = borda
@@ -558,12 +643,11 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         ws.cell(row=linha, column=5, value=r.get('Fator CM', 1.0)).number_format = '0.0000000'; ws.cell(row=linha, column=5).border = borda
         ws.cell(row=linha, column=6, value=r.get('Fator Juros', 0.0)).number_format = '0.00%'; ws.cell(row=linha, column=6).border = borda
         ws.cell(row=linha, column=7, value=r.get('Desc_Regra', '')).border = borda
-        val_display = r['Valor Histórico'] if historico else r['Valor Atualizado']
+        val_display = r['Valor Atualizado']
         subtotal_danos += val_display
         ws.cell(row=linha, column=8, value=val_display).number_format = moeda; ws.cell(row=linha, column=8).border = borda
         linha += 1
 
-    # Inserção da linha de Subtotal dos Danos
     ws.merge_cells(f'A{linha}:G{linha}')
     ws.cell(row=linha, column=1, value="Subtotal Danos Materiais:").alignment = Alignment(horizontal="right")
     ws.cell(row=linha, column=1).font = f_negrito
@@ -577,7 +661,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "2. CUSTAS E DESPESAS PROCESSUAIS"
     ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
     
-    cabs_custas = ['ID / Folha', 'Descrição', 'Data', 'Valor Hist.', 'Fator Corr.', 'Juros (%)', 'Regra', 'Atualizado Exigível']
+    cabs_custas = ['ID / Folha', 'Descrição', 'Data', 'Valor Hist.', 'Fator Corr.', 'Juros (%)', 'Regra', 'Exigível (Sem Abatimentos)' if historico else 'Atualizado Exigível']
     for i, t in enumerate(cabs_custas, 1): 
         ws.cell(row=linha, column=i, value=t).font = f_negrito
         ws.cell(row=linha, column=i).border = borda
@@ -593,13 +677,12 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         ws.cell(row=linha, column=5, value=r.get('Fator CM', 1.0)).number_format = '0.0000000'; ws.cell(row=linha, column=5).border = borda
         ws.cell(row=linha, column=6, value=r.get('Fator Juros', 0.0)).number_format = '0.00%'; ws.cell(row=linha, column=6).border = borda
         ws.cell(row=linha, column=7, value=r.get('Desc_Regra', '')).border = borda
-        val_display_c = r['Valor Histórico'] if (historico and not jg) else r.get('Exigível', 0.0)
+        val_display_c = r.get('Exigível', 0.0)
         valor_final_c = 0.0 if jg else val_display_c
         subtotal_custas += valor_final_c
         ws.cell(row=linha, column=8, value=valor_final_c).number_format = moeda; ws.cell(row=linha, column=8).border = borda
         linha += 1
 
-    # Inserção da linha de Subtotal das Custas
     ws.merge_cells(f'A{linha}:G{linha}')
     ws.cell(row=linha, column=1, value="Subtotal Custas:").alignment = Alignment(horizontal="right")
     ws.cell(row=linha, column=1).font = f_negrito
@@ -669,7 +752,6 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
             add_total("Multa Art. 523 CPC (10%):", multa); add_total("Honorários Art. 523 CPC (10%):", hon_523)
         add_total("TOTAL GERAL DEVIDO:", total, True, True)
 
-    # AQUI CORRIGIMOS O CORTE DO PDF! As larguras foram expandidas significativamente (A e G)
     larguras_minimas = {'A': 35, 'B': 28, 'C': 14, 'D': 16, 'E': 14, 'F': 12, 'G': 32, 'H': 20}
     for letra_col, larg_min in larguras_minimas.items():
         ws.column_dimensions[letra_col].width = larg_min
@@ -780,7 +862,6 @@ class NashGUI:
             try: self.root.iconbitmap(str(icone_path))
             except: pass
             
-        # Inicia o carregamento das bibliotecas pesadas de forma invisível
         threading.Thread(target=preload_heavy_libs, daemon=True).start()
 
         tk.Label(root, text="NASH SYSTEM", font=("Arial", 16, "bold")).pack(pady=(0, 5))
@@ -840,11 +921,10 @@ class NashGUI:
             self.root.after(0, erro)
 
 if __name__ == "__main__":
-    # Trava de Instância Única (Impede o usuário de abrir várias vezes)
     if platform.system() == "Windows":
         import ctypes
         mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "NashSystem_Unico_Mutex")
-        if ctypes.windll.kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
+        if ctypes.windll.kernel32.GetLastError() == 183:
             sys.exit(0)
 
     app = tk.Tk()
