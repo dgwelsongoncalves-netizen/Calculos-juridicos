@@ -9,7 +9,7 @@ import platform
 import subprocess
 from pathlib import Path
 
-__version__ = "2.8.14" # Fix: Bug visual da tabela, correção monetária sobre juros na CG e trava de datas inválidas
+__version__ = "2.8.15" # Feat: Adição da Memória de Cálculo Explicativa para Transição de Regras (Tema 1.368/Lei 14.905)
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -348,6 +348,10 @@ def executar_nash(caminho_entrada, arquivo_saida):
     df_bcb = carregar_taxas_bcb(datas.min() if not datas.empty else pd.NaT)
     data_calculo = pd.Timestamp.today()
     
+    # Preparação para Memória de Transição (Anexo para o Juiz)
+    detalhes_transicao = []
+    data_transicao = pd.to_datetime('2024-08-30')
+    
     for idx, row in df_danos.iterrows():
         regra_txt = str(row.get('Regra', '')).strip().upper()
         if is_fazenda: df_danos.at[idx, 'Desc_Regra'] = "Faz. Pub. (EC 113)"
@@ -391,9 +395,28 @@ def executar_nash(caminho_entrada, arquivo_saida):
 
         val_princ = valor * f_cm
         val_jur = val_princ * f_jur
-        df_danos.at[idx, 'Valor Atualizado'] = val_princ + val_jur
+        val_final_item = val_princ + val_jur
+        df_danos.at[idx, 'Valor Atualizado'] = val_final_item
         df_danos.at[idx, 'Fator CM'] = f_cm
         df_danos.at[idx, 'Fator Juros'] = f_jur
+        
+        # Coleta de dados para a Tabela de Transição Visual (Memória de Cálculo)
+        if regra in ['R3', 'R4', 'R5', 'R7'] and data_cm < data_transicao:
+            if regra == 'R3': f_cm_t, f_jur_t = calc_tjmg_juros_selic(tabela_tjmg, df_bcb, data_cm, data_juros, data_transicao)
+            elif regra == 'R4': f_cm_t, f_jur_t = calc_tjmg_leinova(tabela_tjmg, df_bcb, data_cm, data_juros, data_transicao)
+            elif regra == 'R5': f_cm_t, f_jur_t = calc_selic_leinova(df_bcb, data_cm, data_juros, data_transicao)
+            elif regra == 'R7': f_cm_t, f_jur_t = calc_tjmg_taxalegal_retroativa(tabela_tjmg, df_bcb, data_cm, data_juros, data_transicao)
+            
+            val_ate_agosto = valor * f_cm_t * (1 + f_jur_t)
+            detalhes_transicao.append({
+                'id': str(row.get('ID / Folha', '-')),
+                'desc': str(row.get('Descrição', '')),
+                'data': data_cm,
+                'hist': valor,
+                'val_ate_agosto': val_ate_agosto,
+                'evolucao': val_final_item - val_ate_agosto,
+                'val_final': val_final_item
+            })
         
         v_pedido = float(row['Valor Pedido Inicial'])
         if 'AUTOR' not in atuacao and v_pedido > 0 and pd.notna(row['Data do Pedido']):
@@ -409,7 +432,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
             
             risco_princ = v_pedido * f_cm_ped
             risco_atualizado_total = risco_princ + (risco_princ * f_jur_ped)
-            proveito = max(0, risco_atualizado_total - (val_princ + val_jur))
+            proveito = max(0, risco_atualizado_total - val_final_item)
             
             df_danos.at[idx, 'Risco Atual'] = risco_atualizado_total
             df_danos.at[idx, 'Proveito'] = proveito
@@ -450,7 +473,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         hon_523 = (base_multa * 0.10) if (houve_inadimplemento and not jg) else 0.0
         
         total_final_processo = base_multa + valor_multa + hon_523
-        gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, (subtotal_princ+subtotal_juros), (hon_exigivel_princ+hon_exigivel_juros), valor_multa, hon_523, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, [], base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
+        gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, (subtotal_princ+subtotal_juros), (hon_exigivel_princ+hon_exigivel_juros), valor_multa, hon_523, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, [], detalhes_transicao, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
     else:
         historico_cg = []; saldo_principal = 0.0; saldo_juros = 0.0
@@ -583,13 +606,13 @@ def executar_nash(caminho_entrada, arquivo_saida):
             historico_cg.append((data_calculo, "Atualização Final (Hoje)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
             
         total_final_processo = saldo_principal + saldo_juros
-        gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, 0, 0, 0, 0, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico_cg, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
+        gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, 0, 0, 0, 0, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico_cg, detalhes_transicao, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
     if 'AUTOR' not in atuacao and 'Risco Atual' in df_danos.columns and df_danos['Risco Atual'].sum() > 0:
         gerar_relatorio_exito_cliente(processo, df_danos[df_danos['Risco Atual'] > 0], arquivo_saida)
 
 # --- 6. GERAÇÕES DE ARQUIVOS (LAUDO E ÊXITO) ---
-def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo):
+def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico, detalhes_transicao, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo):
     wb = Workbook()
     ws = wb.active
     ws.title = "Laudo de Liquidação"
@@ -751,6 +774,61 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         if houve_inadimplemento:
             add_total("Multa Art. 523 CPC (10%):", multa); add_total("Honorários Art. 523 CPC (10%):", hon_523)
         add_total("TOTAL GERAL DEVIDO:", total, True, True)
+        linha += 1
+
+    if detalhes_transicao:
+        linha += 1
+        ws.merge_cells(f'A{linha}:H{linha}')
+        ws[f'A{linha}'] = "MEMÓRIA DE CÁLCULO EXPLICATIVA - TRANSIÇÃO DA LEI 14.905/24 (TEMA 1.368 STJ)"
+        ws[f'A{linha}'].font = f_titulo; ws[f'A{linha}'].fill = fundo_escuro; ws[f'A{linha}'].alignment = Alignment(horizontal="center")
+        linha += 1
+        
+        ws.merge_cells(f'A{linha}:H{linha}')
+        ws[f'A{linha}'] = "Demonstrativo da separação matemática entre o regime antigo (finalizado em ago/2024) e a nova Taxa Legal."
+        ws[f'A{linha}'].font = Font(name="Arial", size=10, italic=True)
+        linha += 1
+        
+        cabs_trans = ['ID / Folha', 'Descrição', 'Data Histórica', 'Valor Histórico', 'Atualizado até 30/08/2024\n(Fim do Regime Antigo)', '', 'Acréscimo IPCA + Taxa Legal\n(Nova Lei)', 'Valor Base Final\n(Sem Abatimentos)']
+        for i, t in enumerate(cabs_trans, 1):
+            if i == 6: continue 
+            ws.cell(row=linha, column=i, value=t).font = f_negrito
+            ws.cell(row=linha, column=i).border = borda
+            ws.cell(row=linha, column=i).fill = fundo_cinza
+            ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        
+        ws.merge_cells(f'E{linha}:F{linha}')
+        ws.cell(row=linha, column=5).border = borda; ws.cell(row=linha, column=6).border = borda
+        linha += 1
+        
+        sub_hist = sub_ate_agosto = sub_acrescimo = sub_hoje = 0.0
+        
+        for dt in detalhes_transicao:
+            ws.cell(row=linha, column=1, value=dt['id']).border = borda
+            ws.cell(row=linha, column=2, value=dt['desc']).border = borda
+            ws.cell(row=linha, column=3, value=dt['data'].strftime('%d/%m/%Y')).border = borda
+            ws.cell(row=linha, column=4, value=dt['hist']).number_format = moeda; ws.cell(row=linha, column=4).border = borda
+            
+            ws.merge_cells(f'E{linha}:F{linha}')
+            ws.cell(row=linha, column=5, value=dt['val_ate_agosto']).number_format = moeda; 
+            ws.cell(row=linha, column=5).border = borda; ws.cell(row=linha, column=6).border = borda
+            
+            ws.cell(row=linha, column=7, value=dt['evolucao']).number_format = moeda; ws.cell(row=linha, column=7).border = borda
+            ws.cell(row=linha, column=8, value=dt['val_final']).number_format = moeda; ws.cell(row=linha, column=8).border = borda
+            
+            sub_hist += dt['hist']; sub_ate_agosto += dt['val_ate_agosto']; sub_acrescimo += dt['evolucao']; sub_hoje += dt['val_final']
+            linha += 1
+            
+        ws.merge_cells(f'A{linha}:C{linha}')
+        ws.cell(row=linha, column=1, value="Subtotais da Transição:").alignment = Alignment(horizontal="right")
+        ws.cell(row=linha, column=1).font = f_negrito
+        ws.cell(row=linha, column=1).fill = fundo_cinza
+        ws.cell(row=linha, column=4, value=sub_hist).number_format = moeda; ws.cell(row=linha, column=4).font = f_negrito; ws.cell(row=linha, column=4).fill = fundo_cinza
+        ws.merge_cells(f'E{linha}:F{linha}')
+        ws.cell(row=linha, column=5, value=sub_ate_agosto).number_format = moeda; ws.cell(row=linha, column=5).font = f_negrito; ws.cell(row=linha, column=5).fill = fundo_cinza
+        ws.cell(row=linha, column=7, value=sub_acrescimo).number_format = moeda; ws.cell(row=linha, column=7).font = f_negrito; ws.cell(row=linha, column=7).fill = fundo_cinza
+        ws.cell(row=linha, column=8, value=sub_hoje).number_format = moeda; ws.cell(row=linha, column=8).font = f_negrito; ws.cell(row=linha, column=8).fill = fundo_cinza
+        for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
+        linha += 2
 
     larguras_minimas = {'A': 35, 'B': 28, 'C': 14, 'D': 16, 'E': 14, 'F': 12, 'G': 32, 'H': 20}
     for letra_col, larg_min in larguras_minimas.items():
