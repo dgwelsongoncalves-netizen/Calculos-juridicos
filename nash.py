@@ -9,7 +9,7 @@ import platform
 import subprocess
 from pathlib import Path
 
-__version__ = "2.8.15" # Feat: Adição da Memória de Cálculo Explicativa para Transição de Regras (Tema 1.368/Lei 14.905)
+__version__ = "2.8.17" # Fix: Refinamento cirúrgico das nomenclaturas das colunas e regras na Fase 1 (Transparência Selic)
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -348,8 +348,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
     df_bcb = carregar_taxas_bcb(datas.min() if not datas.empty else pd.NaT)
     data_calculo = pd.Timestamp.today()
     
-    # Preparação para Memória de Transição (Anexo para o Juiz)
-    detalhes_transicao = []
     data_transicao = pd.to_datetime('2024-08-30')
     
     for idx, row in df_danos.iterrows():
@@ -400,23 +398,35 @@ def executar_nash(caminho_entrada, arquivo_saida):
         df_danos.at[idx, 'Fator CM'] = f_cm
         df_danos.at[idx, 'Fator Juros'] = f_jur
         
-        # Coleta de dados para a Tabela de Transição Visual (Memória de Cálculo)
-        if regra in ['R3', 'R4', 'R5', 'R7'] and data_cm < data_transicao:
-            if regra == 'R3': f_cm_t, f_jur_t = calc_tjmg_juros_selic(tabela_tjmg, df_bcb, data_cm, data_juros, data_transicao)
-            elif regra == 'R4': f_cm_t, f_jur_t = calc_tjmg_leinova(tabela_tjmg, df_bcb, data_cm, data_juros, data_transicao)
-            elif regra == 'R5': f_cm_t, f_jur_t = calc_selic_leinova(df_bcb, data_cm, data_juros, data_transicao)
-            elif regra == 'R7': f_cm_t, f_jur_t = calc_tjmg_taxalegal_retroativa(tabela_tjmg, df_bcb, data_cm, data_juros, data_transicao)
+        is_transicao = regra in ['R3', 'R4', 'R5', 'R7']
+        if is_transicao and data_cm < data_transicao:
+            if regra in ['R3', 'R4']: 
+                f_cm_1, f_jur_1 = calc_tjmg_juros_selic(tabela_tjmg, df_bcb, data_cm, data_juros, data_transicao) if regra == 'R3' else calc_tjmg_leinova(tabela_tjmg, df_bcb, data_cm, data_juros, data_transicao)
+                nome_r1 = "Tabela TJMG + Juros 1% a.m."
+            elif regra == 'R5': 
+                f_cm_1, f_jur_1 = calc_selic_leinova(df_bcb, data_cm, data_juros, data_transicao)
+                nome_r1 = "Taxa Selic (Correção e Juros)"
+            elif regra == 'R7': 
+                f_cm_1, f_jur_1 = calc_tjmg_taxalegal_retroativa(tabela_tjmg, df_bcb, data_cm, data_juros, data_transicao)
+                nome_r1 = "Tabela TJMG (Sem Juros)"
             
-            val_ate_agosto = valor * f_cm_t * (1 + f_jur_t)
-            detalhes_transicao.append({
-                'id': str(row.get('ID / Folha', '-')),
-                'desc': str(row.get('Descrição', '')),
-                'data': data_cm,
-                'hist': valor,
-                'val_ate_agosto': val_ate_agosto,
-                'evolucao': val_final_item - val_ate_agosto,
-                'val_final': val_final_item
-            })
+            subtotal_fase1 = valor * f_cm_1 * (1 + f_jur_1)
+            df_danos.at[idx, 'Fase1_CM'] = f_cm_1
+            df_danos.at[idx, 'Fase1_Jur'] = f_jur_1
+            df_danos.at[idx, 'Fase1_Subtotal'] = subtotal_fase1
+            df_danos.at[idx, 'Fase2_IPCA'] = f_cm / f_cm_1 if f_cm_1 > 0 else 1.0
+            df_danos.at[idx, 'Fase2_TL'] = f_jur - f_jur_1
+            df_danos.at[idx, 'Acrecismo'] = val_final_item - subtotal_fase1
+            df_danos.at[idx, 'Tem_Transicao'] = True
+            df_danos.at[idx, 'Regra_Fase1'] = nome_r1
+        else:
+            df_danos.at[idx, 'Fase1_Subtotal'] = valor if data_cm >= data_transicao else val_final_item
+            df_danos.at[idx, 'Fase1_CM'] = 1.0 if data_cm >= data_transicao else f_cm
+            df_danos.at[idx, 'Fase1_Jur'] = 0.0 if data_cm >= data_transicao else f_jur
+            df_danos.at[idx, 'Fase2_IPCA'] = f_cm if data_cm >= data_transicao else 1.0
+            df_danos.at[idx, 'Fase2_TL'] = f_jur if data_cm >= data_transicao else 0.0
+            df_danos.at[idx, 'Acrecismo'] = val_final_item - valor if data_cm >= data_transicao else 0.0
+            df_danos.at[idx, 'Tem_Transicao'] = False
         
         v_pedido = float(row['Valor Pedido Inicial'])
         if 'AUTOR' not in atuacao and v_pedido > 0 and pd.notna(row['Data do Pedido']):
@@ -473,7 +483,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         hon_523 = (base_multa * 0.10) if (houve_inadimplemento and not jg) else 0.0
         
         total_final_processo = base_multa + valor_multa + hon_523
-        gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, (subtotal_princ+subtotal_juros), (hon_exigivel_princ+hon_exigivel_juros), valor_multa, hon_523, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, [], detalhes_transicao, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
+        gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, (subtotal_princ+subtotal_juros), (hon_exigivel_princ+hon_exigivel_juros), valor_multa, hon_523, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, [], base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
     else:
         historico_cg = []; saldo_principal = 0.0; saldo_juros = 0.0
@@ -606,13 +616,13 @@ def executar_nash(caminho_entrada, arquivo_saida):
             historico_cg.append((data_calculo, "Atualização Final (Hoje)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
             
         total_final_processo = saldo_principal + saldo_juros
-        gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, 0, 0, 0, 0, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico_cg, detalhes_transicao, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
+        gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, 0, 0, 0, 0, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico_cg, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
     if 'AUTOR' not in atuacao and 'Risco Atual' in df_danos.columns and df_danos['Risco Atual'].sum() > 0:
         gerar_relatorio_exito_cliente(processo, df_danos[df_danos['Risco Atual'] > 0], arquivo_saida)
 
 # --- 6. GERAÇÕES DE ARQUIVOS (LAUDO E ÊXITO) ---
-def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico, detalhes_transicao, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo):
+def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo):
     wb = Workbook()
     ws = wb.active
     ws.title = "Laudo de Liquidação"
@@ -646,49 +656,136 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     for r in range(4, 7): ws.cell(row=r, column=1).font = f_negrito; ws.cell(row=r, column=4).font = f_negrito
 
     linha = 8
-    ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "1. DANOS MATERIAIS E VALORES PRINCIPAIS"
-    ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
+    
+    tem_transicao_global = df_danos['Tem_Transicao'].any() if 'Tem_Transicao' in df_danos.columns else False
 
-    cabs = ['ID / Folha', 'Descrição', 'Data', 'Valor Hist.', 'Fator Corr.', 'Juros (%)', 'Regra', 'Atualizado (Sem Abatimentos)' if historico else 'Valor Atualizado']
-    for i, t in enumerate(cabs, 1): 
-        ws.cell(row=linha, column=i, value=t).font = f_negrito
-        ws.cell(row=linha, column=i).border = borda
-        ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center")
-    linha += 1
+    if tem_transicao_global and not historico:
+        # Tabela FASE 1
+        ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "1. DANOS MATERIAIS - FASE 1: ATÉ 30/08/2024 (Consolidação do Regime Antigo)"
+        ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
 
-    subtotal_danos = 0.0
-    for _, r in df_danos.iterrows():
-        exibe_data = r['Data Desembolso'].strftime('%d/%m/%Y') if float(r['Valor Histórico']) > 0 and pd.notna(r['Data Desembolso']) else "-" 
-        ws.cell(row=linha, column=1, value=r['ID / Folha']).border = borda
-        ws.cell(row=linha, column=2, value=r['Descrição']).border = borda
-        ws.cell(row=linha, column=3, value=exibe_data).border = borda
-        ws.cell(row=linha, column=4, value=r['Valor Histórico']).number_format = moeda; ws.cell(row=linha, column=4).border = borda
-        ws.cell(row=linha, column=5, value=r.get('Fator CM', 1.0)).number_format = '0.0000000'; ws.cell(row=linha, column=5).border = borda
-        ws.cell(row=linha, column=6, value=r.get('Fator Juros', 0.0)).number_format = '0.00%'; ws.cell(row=linha, column=6).border = borda
-        ws.cell(row=linha, column=7, value=r.get('Desc_Regra', '')).border = borda
-        val_display = r['Valor Atualizado']
-        subtotal_danos += val_display
-        ws.cell(row=linha, column=8, value=val_display).number_format = moeda; ws.cell(row=linha, column=8).border = borda
+        cabs1 = ['ID / Folha', 'Descrição', 'Data Hist.', 'Valor Hist.', 'Fator Acumulado\n(Índice ou Selic)', 'Juros (%)\n(Se houver)', 'Índice Aplicado\n(Fase 1)', 'Subtotal Fase 1']
+        for i, t in enumerate(cabs1, 1): 
+            ws.cell(row=linha, column=i, value=t).font = f_negrito
+            ws.cell(row=linha, column=i).border = borda
+            ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         linha += 1
 
-    ws.merge_cells(f'A{linha}:G{linha}')
-    ws.cell(row=linha, column=1, value="Subtotal Danos Materiais:").alignment = Alignment(horizontal="right")
-    ws.cell(row=linha, column=1).font = f_negrito
-    ws.cell(row=linha, column=1).fill = fundo_cinza
-    ws.cell(row=linha, column=8, value=subtotal_danos).number_format = moeda
-    ws.cell(row=linha, column=8).font = f_negrito
-    ws.cell(row=linha, column=8).fill = fundo_cinza
-    for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
-    linha += 2
+        subtotal_fase1_global = 0.0
+        for _, r in df_danos.iterrows():
+            exibe_data = r['Data Desembolso'].strftime('%d/%m/%Y') if float(r['Valor Histórico']) > 0 and pd.notna(r['Data Desembolso']) else "-" 
+            ws.cell(row=linha, column=1, value=r['ID / Folha']).border = borda
+            ws.cell(row=linha, column=2, value=r['Descrição']).border = borda
+            ws.cell(row=linha, column=3, value=exibe_data).border = borda
+            ws.cell(row=linha, column=4, value=r['Valor Histórico']).number_format = moeda; ws.cell(row=linha, column=4).border = borda
+            ws.cell(row=linha, column=5, value=r.get('Fase1_CM', 1.0)).number_format = '0.0000000'; ws.cell(row=linha, column=5).border = borda
+            ws.cell(row=linha, column=6, value=r.get('Fase1_Jur', 0.0)).number_format = '0.00%'; ws.cell(row=linha, column=6).border = borda
+            
+            regra_exibida = r.get('Regra_Fase1', r.get('Desc_Regra', ''))
+            ws.cell(row=linha, column=7, value=regra_exibida).border = borda
+            
+            val_fase1 = r.get('Fase1_Subtotal', r['Valor Atualizado'])
+            subtotal_fase1_global += val_fase1
+            ws.cell(row=linha, column=8, value=val_fase1).number_format = moeda; ws.cell(row=linha, column=8).border = borda
+            linha += 1
 
-    ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "2. CUSTAS E DESPESAS PROCESSUAIS"
+        ws.merge_cells(f'A{linha}:G{linha}')
+        ws.cell(row=linha, column=1, value="Total Consolidado na Fase 1 (Agosto/2024):").alignment = Alignment(horizontal="right")
+        ws.cell(row=linha, column=1).font = f_negrito; ws.cell(row=linha, column=1).fill = fundo_cinza
+        ws.cell(row=linha, column=8, value=subtotal_fase1_global).number_format = moeda; ws.cell(row=linha, column=8).font = f_negrito; ws.cell(row=linha, column=8).fill = fundo_cinza
+        for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
+        linha += 2
+
+        # Tabela FASE 2
+        ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "1.1. DANOS MATERIAIS - FASE 2: APÓS 30/08/2024 (Lei 14.905/24 - IPCA + Taxa Legal)"
+        ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
+
+        cabs2 = ['ID / Folha', 'Descrição', 'Base de Cálculo\n(Subtotal Fase 1)', 'Fator IPCA\n(A partir 09/24)', 'Taxa Legal (%)\n(A partir 09/24)', 'Acréscimo R$\n(Fase 2)', 'Índice Aplicado\n(Fase 2)', 'Valor Atualizado\nFinal']
+        for i, t in enumerate(cabs2, 1): 
+            ws.cell(row=linha, column=i, value=t).font = f_negrito
+            ws.cell(row=linha, column=i).border = borda
+            ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        linha += 1
+
+        subtotal_danos = 0.0
+        for _, r in df_danos.iterrows():
+            ws.cell(row=linha, column=1, value=r['ID / Folha']).border = borda
+            ws.cell(row=linha, column=2, value=r['Descrição']).border = borda
+            
+            val_fase1 = r.get('Fase1_Subtotal', r['Valor Atualizado'])
+            ws.cell(row=linha, column=3, value=val_fase1).number_format = moeda; ws.cell(row=linha, column=3).border = borda
+            
+            ws.cell(row=linha, column=4, value=r.get('Fase2_IPCA', 1.0)).number_format = '0.0000000'; ws.cell(row=linha, column=4).border = borda
+            ws.cell(row=linha, column=5, value=r.get('Fase2_TL', 0.0)).number_format = '0.00%'; ws.cell(row=linha, column=5).border = borda
+            
+            acrescimo = r.get('Acrecismo', 0.0)
+            ws.cell(row=linha, column=6, value=acrescimo).number_format = moeda; ws.cell(row=linha, column=6).border = borda
+            
+            regra_nova = "IPCA + Taxa Legal" if r.get('Tem_Transicao', False) else "-"
+            ws.cell(row=linha, column=7, value=regra_nova).border = borda
+            
+            val_final = r['Valor Atualizado']
+            subtotal_danos += val_final
+            ws.cell(row=linha, column=8, value=val_final).number_format = moeda; ws.cell(row=linha, column=8).border = borda
+            linha += 1
+
+        ws.merge_cells(f'A{linha}:G{linha}')
+        ws.cell(row=linha, column=1, value="Subtotal Danos Materiais Atualizados:").alignment = Alignment(horizontal="right")
+        ws.cell(row=linha, column=1).font = f_negrito; ws.cell(row=linha, column=1).fill = fundo_cinza
+        ws.cell(row=linha, column=8, value=subtotal_danos).number_format = moeda; ws.cell(row=linha, column=8).font = f_negrito; ws.cell(row=linha, column=8).fill = fundo_cinza
+        for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
+        linha += 2
+        
+        num_custas = "2"
+        num_resumo = "3"
+        
+    else:
+        ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "1. DANOS MATERIAIS E VALORES PRINCIPAIS"
+        ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
+
+        cabs = ['ID / Folha', 'Descrição', 'Data', 'Valor Hist.', 'Fator Acumulado\n(Índice ou Selic)', 'Juros (%)', 'Regra', 'Atualizado (Sem Abatimentos)' if historico else 'Valor Atualizado']
+        for i, t in enumerate(cabs, 1): 
+            ws.cell(row=linha, column=i, value=t).font = f_negrito
+            ws.cell(row=linha, column=i).border = borda
+            ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        linha += 1
+
+        subtotal_danos = 0.0
+        for _, r in df_danos.iterrows():
+            exibe_data = r['Data Desembolso'].strftime('%d/%m/%Y') if float(r['Valor Histórico']) > 0 and pd.notna(r['Data Desembolso']) else "-" 
+            ws.cell(row=linha, column=1, value=r['ID / Folha']).border = borda
+            ws.cell(row=linha, column=2, value=r['Descrição']).border = borda
+            ws.cell(row=linha, column=3, value=exibe_data).border = borda
+            ws.cell(row=linha, column=4, value=r['Valor Histórico']).number_format = moeda; ws.cell(row=linha, column=4).border = borda
+            ws.cell(row=linha, column=5, value=r.get('Fator CM', 1.0)).number_format = '0.0000000'; ws.cell(row=linha, column=5).border = borda
+            ws.cell(row=linha, column=6, value=r.get('Fator Juros', 0.0)).number_format = '0.00%'; ws.cell(row=linha, column=6).border = borda
+            ws.cell(row=linha, column=7, value=r.get('Desc_Regra', '')).border = borda
+            val_display = r['Valor Atualizado']
+            subtotal_danos += val_display
+            ws.cell(row=linha, column=8, value=val_display).number_format = moeda; ws.cell(row=linha, column=8).border = borda
+            linha += 1
+
+        ws.merge_cells(f'A{linha}:G{linha}')
+        ws.cell(row=linha, column=1, value="Subtotal Danos Materiais:").alignment = Alignment(horizontal="right")
+        ws.cell(row=linha, column=1).font = f_negrito
+        ws.cell(row=linha, column=1).fill = fundo_cinza
+        ws.cell(row=linha, column=8, value=subtotal_danos).number_format = moeda
+        ws.cell(row=linha, column=8).font = f_negrito
+        ws.cell(row=linha, column=8).fill = fundo_cinza
+        for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
+        linha += 2
+        
+        num_custas = "2"
+        num_resumo = "3"
+
+    ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = f"{num_custas}. CUSTAS E DESPESAS PROCESSUAIS"
     ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
     
     cabs_custas = ['ID / Folha', 'Descrição', 'Data', 'Valor Hist.', 'Fator Corr.', 'Juros (%)', 'Regra', 'Exigível (Sem Abatimentos)' if historico else 'Atualizado Exigível']
     for i, t in enumerate(cabs_custas, 1): 
         ws.cell(row=linha, column=i, value=t).font = f_negrito
         ws.cell(row=linha, column=i).border = borda
-        ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center")
+        ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     linha += 1
     
     subtotal_custas = 0.0
@@ -717,7 +814,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     linha += 2
 
     if historico:
-        ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "3. EVOLUÇÃO DA DÍVIDA (AMORTIZAÇÃO CONTA GRÁFICA - Art. 354 CC)"
+        ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = f"{num_resumo}. EVOLUÇÃO DA DÍVIDA (AMORTIZAÇÃO CONTA GRÁFICA - Art. 354 CC)"
         ws[f'A{linha}'].font = f_titulo; ws[f'A{linha}'].fill = fundo_escuro; ws[f'A{linha}'].alignment = Alignment(horizontal="center"); linha += 1
         
         ws.merge_cells(f'A{linha}:B{linha}'); ws.merge_cells(f'C{linha}:D{linha}')
@@ -757,7 +854,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
             
     else:
-        ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "3. RESUMO DA LIQUIDAÇÃO"
+        ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = f"{num_resumo}. RESUMO DA LIQUIDAÇÃO"
         ws[f'A{linha}'].font = f_titulo; ws[f'A{linha}'].fill = fundo_escuro; ws[f'A{linha}'].alignment = Alignment(horizontal="center"); linha += 1
 
         def add_total(desc, val, negrito=False, dest=False):
@@ -775,60 +872,6 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
             add_total("Multa Art. 523 CPC (10%):", multa); add_total("Honorários Art. 523 CPC (10%):", hon_523)
         add_total("TOTAL GERAL DEVIDO:", total, True, True)
         linha += 1
-
-    if detalhes_transicao:
-        linha += 1
-        ws.merge_cells(f'A{linha}:H{linha}')
-        ws[f'A{linha}'] = "MEMÓRIA DE CÁLCULO EXPLICATIVA - TRANSIÇÃO DA LEI 14.905/24 (TEMA 1.368 STJ)"
-        ws[f'A{linha}'].font = f_titulo; ws[f'A{linha}'].fill = fundo_escuro; ws[f'A{linha}'].alignment = Alignment(horizontal="center")
-        linha += 1
-        
-        ws.merge_cells(f'A{linha}:H{linha}')
-        ws[f'A{linha}'] = "Demonstrativo da separação matemática entre o regime antigo (finalizado em ago/2024) e a nova Taxa Legal."
-        ws[f'A{linha}'].font = Font(name="Arial", size=10, italic=True)
-        linha += 1
-        
-        cabs_trans = ['ID / Folha', 'Descrição', 'Data Histórica', 'Valor Histórico', 'Atualizado até 30/08/2024\n(Fim do Regime Antigo)', '', 'Acréscimo IPCA + Taxa Legal\n(Nova Lei)', 'Valor Base Final\n(Sem Abatimentos)']
-        for i, t in enumerate(cabs_trans, 1):
-            if i == 6: continue 
-            ws.cell(row=linha, column=i, value=t).font = f_negrito
-            ws.cell(row=linha, column=i).border = borda
-            ws.cell(row=linha, column=i).fill = fundo_cinza
-            ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        
-        ws.merge_cells(f'E{linha}:F{linha}')
-        ws.cell(row=linha, column=5).border = borda; ws.cell(row=linha, column=6).border = borda
-        linha += 1
-        
-        sub_hist = sub_ate_agosto = sub_acrescimo = sub_hoje = 0.0
-        
-        for dt in detalhes_transicao:
-            ws.cell(row=linha, column=1, value=dt['id']).border = borda
-            ws.cell(row=linha, column=2, value=dt['desc']).border = borda
-            ws.cell(row=linha, column=3, value=dt['data'].strftime('%d/%m/%Y')).border = borda
-            ws.cell(row=linha, column=4, value=dt['hist']).number_format = moeda; ws.cell(row=linha, column=4).border = borda
-            
-            ws.merge_cells(f'E{linha}:F{linha}')
-            ws.cell(row=linha, column=5, value=dt['val_ate_agosto']).number_format = moeda; 
-            ws.cell(row=linha, column=5).border = borda; ws.cell(row=linha, column=6).border = borda
-            
-            ws.cell(row=linha, column=7, value=dt['evolucao']).number_format = moeda; ws.cell(row=linha, column=7).border = borda
-            ws.cell(row=linha, column=8, value=dt['val_final']).number_format = moeda; ws.cell(row=linha, column=8).border = borda
-            
-            sub_hist += dt['hist']; sub_ate_agosto += dt['val_ate_agosto']; sub_acrescimo += dt['evolucao']; sub_hoje += dt['val_final']
-            linha += 1
-            
-        ws.merge_cells(f'A{linha}:C{linha}')
-        ws.cell(row=linha, column=1, value="Subtotais da Transição:").alignment = Alignment(horizontal="right")
-        ws.cell(row=linha, column=1).font = f_negrito
-        ws.cell(row=linha, column=1).fill = fundo_cinza
-        ws.cell(row=linha, column=4, value=sub_hist).number_format = moeda; ws.cell(row=linha, column=4).font = f_negrito; ws.cell(row=linha, column=4).fill = fundo_cinza
-        ws.merge_cells(f'E{linha}:F{linha}')
-        ws.cell(row=linha, column=5, value=sub_ate_agosto).number_format = moeda; ws.cell(row=linha, column=5).font = f_negrito; ws.cell(row=linha, column=5).fill = fundo_cinza
-        ws.cell(row=linha, column=7, value=sub_acrescimo).number_format = moeda; ws.cell(row=linha, column=7).font = f_negrito; ws.cell(row=linha, column=7).fill = fundo_cinza
-        ws.cell(row=linha, column=8, value=sub_hoje).number_format = moeda; ws.cell(row=linha, column=8).font = f_negrito; ws.cell(row=linha, column=8).fill = fundo_cinza
-        for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
-        linha += 2
 
     larguras_minimas = {'A': 35, 'B': 28, 'C': 14, 'D': 16, 'E': 14, 'F': 12, 'G': 32, 'H': 20}
     for letra_col, larg_min in larguras_minimas.items():
