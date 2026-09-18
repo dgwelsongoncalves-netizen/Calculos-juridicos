@@ -1,6 +1,8 @@
 import pytest
 import pandas as pd
 import nash 
+import os
+import openpyxl
 
 # Carrega o Pandas dentro do nash.py antes de rodar os testes
 nash.preload_heavy_libs()
@@ -21,7 +23,7 @@ def mock_bcb():
     return {
         'SELIC': df_fixo.rename(columns={'VALOR': 'SELIC'}),
         'IPCA': df_fixo.rename(columns={'VALOR': 'IPCA'}),
-        'TAXA_LEGAL': df_fixo.rename(columns={'VALOR': 'TAXA_LEGAL'}), # Como IPCA é 1% e Selic é 1%, Taxa Legal = 0% na prática real, mas mantemos isolado no mock
+        'TAXA_LEGAL': df_fixo.rename(columns={'VALOR': 'TAXA_LEGAL'}), 
         'IPCA_E': df_fixo.rename(columns={'VALOR': 'IPCA_E'}),
         'POUPANCA': df_fixo.rename(columns={'VALOR': 'POUPANCA'})
     }
@@ -42,7 +44,6 @@ def test_r2_selic_pura(mock_bcb):
     assert f_jur == pytest.approx((1.01 ** 3) - 1.0) 
 
 def test_r3_tjmg_selic(mock_tjmg, mock_bcb):
-    """Testa transição de TJMG+1% para Selic após 08/2024"""
     d_inicio = pd.to_datetime('2024-06-01')
     d_fim = pd.to_datetime('2024-10-01')
     f_cm, f_jur = nash.calc_tjmg_juros_selic(mock_tjmg, mock_bcb, d_inicio, d_inicio, d_fim)
@@ -50,7 +51,6 @@ def test_r3_tjmg_selic(mock_tjmg, mock_bcb):
     assert f_jur > 0.0
 
 def test_r4_tjmg_leinova(mock_tjmg, mock_bcb):
-    """Testa transição de TJMG+1% para Lei 14.905 após 08/2024"""
     d_inicio = pd.to_datetime('2024-06-01')
     d_fim = pd.to_datetime('2024-10-01')
     f_cm, f_jur = nash.calc_tjmg_leinova(mock_tjmg, mock_bcb, d_inicio, d_inicio, d_fim)
@@ -58,7 +58,6 @@ def test_r4_tjmg_leinova(mock_tjmg, mock_bcb):
     assert f_jur > 0.0
 
 def test_r5_tema_1368_transicao(mock_bcb):
-    """Testa a blindagem da transição do STJ: Selic até 08/2024, IPCA+TL depois"""
     d_inicio = pd.to_datetime('2024-06-01')
     d_fim = pd.to_datetime('2024-10-01') 
     f_cm, f_jur = nash.calc_selic_leinova(mock_bcb, d_inicio, d_inicio, d_fim)
@@ -66,23 +65,20 @@ def test_r5_tema_1368_transicao(mock_bcb):
     assert f_jur >= 0.0
 
 def test_r6_leinova_pura(mock_bcb):
-    """Testa a regra da Lei 14.905/24 atuando em período completo"""
     d_inicio = pd.to_datetime('2024-06-01')
     d_fim = pd.to_datetime('2024-10-01')
     f_cm, f_jur = nash.calc_leinova_pura(mock_bcb, d_inicio, d_inicio, d_fim)
     assert f_cm > 1.0
-    assert f_jur == 0.0 # Porque SELIC (0.01) - IPCA (0.01) no mock resulta em Taxa Legal = 0
+    assert f_jur == 0.0
 
 def test_r7_taxalegal_retroativa(mock_tjmg, mock_bcb):
-    """Testa TJMG atuando apenas na correção e Taxa Legal Retroativa nos Juros"""
     d_inicio = pd.to_datetime('2024-06-01')
     d_fim = pd.to_datetime('2024-10-01')
     f_cm, f_jur = nash.calc_tjmg_taxalegal_retroativa(mock_tjmg, mock_bcb, d_inicio, d_inicio, d_fim)
     assert f_cm > 1.0
-    assert f_jur == 0.0 # Mesma lógica da R6 no mock (SELIC - IPCA = 0)
+    assert f_jur == 0.0 
 
 def test_fazenda_publica(mock_bcb):
-    """Testa se o corte temporal da Emenda Constitucional 113/2021 (Dez/21) é aplicado"""
     d_inicio = pd.to_datetime('2021-10-01')
     d_fim = pd.to_datetime('2022-03-01')
     f_cm, f_jur = nash.calc_fazenda_publica(mock_bcb, d_inicio, d_inicio, d_fim)
@@ -91,24 +87,85 @@ def test_fazenda_publica(mock_bcb):
 
 # --- 3. TESTES DE LÓGICAS COMPLEXAS ---
 def test_delta_conta_grafica_sem_anatocismo():
-    """Prova matemática de que a lógica Conta Gráfica calcula o salto de juros sem compor (sem anatocismo)"""
     jur_t1 = 0.10
     jur_t2 = 0.15
     f_jur_delta = jur_t2 - jur_t1
     assert f_jur_delta == pytest.approx(0.05) 
 
 def test_exito_proveito_economico():
-    """Prova a matemática do Relatório de Economia: Proveito = Risco - Condenação Real"""
     v_pedido_inicial = 10000.0
     f_cm_pedido = 1.5
-    f_jur_pedido = 0.50 # 50% de juros
-    risco_atualizado_total = (v_pedido_inicial * f_cm_pedido) * (1 + f_jur_pedido) # 10k * 1.5 * 1.5 = 22.500,00
+    f_jur_pedido = 0.50 
+    risco_atualizado_total = (v_pedido_inicial * f_cm_pedido) * (1 + f_jur_pedido) 
     
     val_princ_condenacao = 5000.0
     val_jur_condenacao = 1000.0
-    total_condenacao = val_princ_condenacao + val_jur_condenacao # 6.000,00 real
+    total_condenacao = val_princ_condenacao + val_jur_condenacao 
     
     proveito = max(0, risco_atualizado_total - total_condenacao)
     
     assert risco_atualizado_total == 22500.0
-    assert proveito == 16500.0 # A associação deixou de pagar 16.500
+    assert proveito == 16500.0 
+
+def test_integracao_custas_r1_com_conta_grafica(tmp_path):
+    # 1. Cria os dados do cenário que causava o erro
+    df_param = pd.DataFrame([
+        ['Processo', 'Teste Sincronizacao Custas'],
+        ['Justiça Gratuita', 'NÃO'],
+        ['Atuação', 'AUTOR'],
+        ['Data do Trânsito', '19/06/2024'],
+        ['Proporção Custas (%)', '100%'],
+    ]).set_index(0)
+    
+    df_danos = pd.DataFrame({
+        'ID / Folha': ['DANO-1'], 'Descrição': ['Dano Principal'], 
+        'Data Desembolso': ['20/10/2018'], 'Valor Histórico': [1000.0], 
+        'Regra': ['R1']
+    })
+    
+    df_custas = pd.DataFrame({
+        'ID / Folha': ['CUSTA-1'], 'Descrição': ['Custas Iniciais'], 
+        'Data Desembolso': ['16/04/2021'], 'Valor Histórico': [464.64]
+    })
+    
+    df_deducoes = pd.DataFrame({
+        'Data bloqueio/deposito': ['05/09/2025'], 'Valor': [450.0]
+    })
+    
+    # 2. Guarda a folha de cálculo falsa numa pasta temporária do pytest
+    input_file = tmp_path / "entrada_teste_luciana.xlsx"
+    output_file = tmp_path / "Laudo_entrada_teste_luciana.xlsx"
+    
+    with pd.ExcelWriter(input_file) as writer:
+        df_param.to_excel(writer, sheet_name='Parametros', header=False)
+        df_danos.to_excel(writer, sheet_name='Danos', index=False)
+        df_custas.to_excel(writer, sheet_name='Custas', index=False)
+        df_deducoes.to_excel(writer, sheet_name='Deducoes', index=False)
+        
+    # 3. Executa o motor do Nash System
+    nash.executar_nash(str(input_file), str(output_file))
+    
+    # 4. Lê o Laudo gerado para validar a correção matemática
+    assert output_file.exists(), "O laudo de liquidação não foi gerado!"
+    
+    wb = openpyxl.load_workbook(output_file)
+    ws = wb['Laudo de Liquidação']
+    
+    achou_tabela_custas = False
+    regra_aplicada = ""
+    valor_exigivel = 0.0
+    
+    for row in ws.iter_rows(values_only=True):
+        col0 = str(row[0]) if row[0] else ""
+        if "CUSTAS E DESPESAS PROCESSUAIS" in col0:
+            achou_tabela_custas = True
+            
+        if achou_tabela_custas and col0 == 'CUSTA-1':
+            regra_aplicada = str(row[6]) 
+            valor_exigivel = float(row[7]) 
+            break
+            
+    # Aserções de auditoria
+    assert "TJMG" in regra_aplicada or "R1" in regra_aplicada, f"Erro: A regra das custas não sincronizou. Registou: {regra_aplicada}"
+    assert valor_exigivel > 0.0, "Erro Crítico: O valor exigível das custas ficou a zeros na Conta Gráfica!"
+    assert valor_exigivel > 464.64, "Erro: O valor exigível não sofreu atualização monetária."
