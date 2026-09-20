@@ -25,3 +25,7 @@ Processos_Entrada/*
 
 # Ignorar arquivos de log locais do sistema
 *.log
+dist/
+build/
+Instalador_Final/
+*.exe

@@ -1,4 +1,4 @@
-name: Gerar Executavel Windows
+name: Gerar Instalador Windows
 
 on:
   push:
@@ -16,26 +16,23 @@ jobs:
     - name: Configurar o Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.12' 
+        python-version: '3.12'
 
     - name: Instalar bibliotecas fixadas
       run: |
         python -m pip install --upgrade pip
         pip install pyinstaller
         pip install -r requirements.txt
-        
-    - name: Fabricar o aplicativo Windows
-      run: |
-        pyinstaller --noconfirm --onedir --windowed --icon=dr_nash.ico --add-data "dr_nash.ico;." --name="Nash_System" nash.py
 
-    - name: Copiar planilhas e tabelas para a pasta final
-      shell: bash
+    - name: Fabricar o aplicativo Windows (OneFile)
       run: |
-        cp -r Tabelas_Oficiais dist/Nash_System/
-        cp template_nash.xlsx dist/Nash_System/
+        pyinstaller --noconfirm --windowed --onefile --icon=dr_nash.ico --add-data "dr_nash.ico;." nash.py
 
-    - name: Salvar pacote para download
+    - name: Compilar o Instalador (Inno Setup)
+      run: iscc gerador_nash.iss
+
+    - name: Salvar Instalador para download
       uses: actions/upload-artifact@v4
       with:
-        name: Nash_System_Windows_Pronto
-        path: dist/Nash_System
+        name: Instalador_Nash_System
+        path: Instalador_Final/Instalador_Nash_System.exe
