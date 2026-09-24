@@ -9,7 +9,7 @@ import platform
 import subprocess
 from pathlib import Path
 
-__version__ = "2.8.19" # Fix: Robustez ao carregar colunas ausentes no template (evitando AttributeError no Pandas)
+__version__ = "3.0.0" 
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -270,6 +270,21 @@ def converter_para_pdf(caminho_xlsx):
         return True
     except: return False
 
+# --- FUNÇÃO AUXILIAR DE HIGIENIZAÇÃO DE MOEDA ---
+def limpar_moeda(val):
+    if isinstance(val, (int, float)):
+        return float(val)
+    val = str(val).strip()
+    if not val or val.lower() == 'nan':
+        return 0.0
+    if '.' in val and ',' in val:
+        val = val.replace('.', '')
+    val = val.replace(',', '.')
+    try:
+        return float(val)
+    except:
+        return 0.0
+
 # --- 5. PROCESSAMENTO CENTRAL ---
 def executar_nash(caminho_entrada, arquivo_saida):
     preload_heavy_libs()
@@ -330,11 +345,17 @@ def executar_nash(caminho_entrada, arquivo_saida):
     prop_hon, prop_custas = parse_percent(get_param('Proporção Honorários (%)', 100)), parse_percent(get_param('Proporção Custas (%)', 100))
 
     df_danos = pd.read_excel(xls, sheet_name='Danos').dropna(subset=['Descrição'], how='any')
-    df_danos['Valor Histórico'] = pd.to_numeric(df_danos['Valor Histórico'], errors='coerce').fillna(0.0)
     
+    # --- HIGIENIZAÇÃO DE DADOS: DANOS ---
+    df_danos['Valor Histórico'] = df_danos['Valor Histórico'].apply(limpar_moeda)
     if 'Valor Pedido Inicial' not in df_danos.columns:
         df_danos['Valor Pedido Inicial'] = 0.0
-    df_danos['Valor Pedido Inicial'] = pd.to_numeric(df_danos['Valor Pedido Inicial'], errors='coerce').fillna(0.0)
+    df_danos['Valor Pedido Inicial'] = df_danos['Valor Pedido Inicial'].apply(limpar_moeda)
+    
+    # Inicialização de colunas de resultados (Evita KeyError)
+    df_danos['Valor Atualizado'] = 0.0
+    df_danos['Fator CM'] = 1.0
+    df_danos['Fator Juros'] = 0.0
     
     if 'Data Desembolso' not in df_danos.columns:
         df_danos['Data Desembolso'] = pd.NaT
@@ -349,6 +370,13 @@ def executar_nash(caminho_entrada, arquivo_saida):
     df_danos.loc[(df_danos['Valor Histórico'] == 0) & (df_danos['Data Desembolso'].isna()), 'Data Desembolso'] = df_danos['Data do Pedido']
     
     df_custas = pd.read_excel(xls, sheet_name='Custas').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
+    
+    # --- HIGIENIZAÇÃO DE DADOS: CUSTAS ---
+    df_custas['Valor Histórico'] = df_custas['Valor Histórico'].apply(limpar_moeda)
+    df_custas['Exigível'] = 0.0
+    df_custas['Fator CM'] = 1.0
+    df_custas['Fator Juros'] = 0.0
+    
     try:
         df_custas['Data Desembolso'] = pd.to_datetime(df_custas['Data Desembolso'], format='mixed', dayfirst=True, errors='coerce')
     except: pass
@@ -441,19 +469,24 @@ def executar_nash(caminho_entrada, arquivo_saida):
             df_danos.at[idx, 'Risco Atual'] = risco_atualizado_total
             df_danos.at[idx, 'Proveito'] = proveito
 
-    # 5.2. PROCESSAMENTO DE CUSTAS (EXIBIÇÃO VISUAL E SINCRONIZAÇÃO DE REGRAS)
+    # 5.2. PROCESSAMENTO DE CUSTAS (FORÇA LEI 14.905/24)
     for idx, row in df_custas.iterrows():
         data_cm_c = row['Data Desembolso']
         if pd.isna(data_cm_c): continue
         data_jur_c = data_transito_c if teve_transito else pd.NaT
-        f_cm, f_jur = get_fator_calculo(regra_predominante, data_cm_c, data_jur_c, data_calculo)
         
+        if is_fazenda:
+            f_cm, f_jur = calc_fazenda_publica(df_bcb, data_cm_c, data_jur_c, data_calculo)
+            nome_base_regra = "Fazenda P."
+        else:
+            f_cm, f_jur = calc_leinova_pura(df_bcb, data_cm_c, data_jur_c, data_calculo)
+            nome_base_regra = "Lei 14.905/24"
+            
         val_princ = (row['Valor Histórico'] * f_cm) * prop_custas
         val_jur = val_princ * f_jur
         df_custas.at[idx, 'Exigível'] = 0.0 if jg else val_princ + val_jur
         df_custas.at[idx, 'Fator CM'] = f_cm
         df_custas.at[idx, 'Fator Juros'] = f_jur
-        nome_base_regra = "Fazenda P." if is_fazenda else regra_predominante
         df_custas.at[idx, 'Desc_Regra'] = f"{nome_base_regra} (Trânsito)" if teve_transito else f"{nome_base_regra} (S/ Juros)"
 
     try:
@@ -529,7 +562,12 @@ def executar_nash(caminho_entrada, arquivo_saida):
             data_cm_c = row['Data Desembolso']
             if pd.isna(data_cm_c) or data_cm_c > data_corte or jg: continue
             data_jur_c = data_transito_c if teve_transito else pd.NaT
-            f_cm, f_jur = get_fator_calculo(regra_predominante, data_cm_c, data_jur_c, data_corte) 
+            
+            if is_fazenda:
+                f_cm, f_jur = calc_fazenda_publica(df_bcb, data_cm_c, data_jur_c, data_corte)
+            else:
+                f_cm, f_jur = calc_leinova_pura(df_bcb, data_cm_c, data_jur_c, data_corte)
+                
             val_princ = (row['Valor Histórico'] * f_cm) * prop_custas
             saldo_principal += val_princ; saldo_juros += val_princ * f_jur
             
@@ -1046,12 +1084,27 @@ class NashGUI:
             self.root.after(0, erro)
 
 if __name__ == "__main__":
-    if platform.system() == "Windows":
-        import ctypes
-        mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "NashSystem_Unico_Mutex")
-        if ctypes.windll.kernel32.GetLastError() == 183:
+    if len(sys.argv) > 3:
+        arquivo_entrada = Path(sys.argv[1])
+        arquivo_saida = Path(sys.argv[2])
+        try:
+            logging.info(f"Modo Backend ativado para {arquivo_entrada.name}")
+            executar_nash(arquivo_entrada, arquivo_saida)
+            logging.info("Cálculo concluído com sucesso no backend.")
+            print("SUCESSO") 
             sys.exit(0)
+        except Exception as e:
+            tb_str = traceback.format_exc()
+            logging.error(f"Erro fatal no backend:\n{tb_str}")
+            print(f"ERRO: {str(e)}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        if platform.system() == "Windows":
+            import ctypes
+            mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "NashSystem_Unico_Mutex")
+            if ctypes.windll.kernel32.GetLastError() == 183:
+                sys.exit(0)
 
-    app = tk.Tk()
-    gui = NashGUI(app)
-    app.mainloop()
+        app = tk.Tk()
+        gui = NashGUI(app)
+        app.mainloop()

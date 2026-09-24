@@ -107,7 +107,13 @@ def test_exito_proveito_economico():
     assert risco_atualizado_total == 22500.0
     assert proveito == 16500.0 
 
-def test_integracao_custas_r1_com_conta_grafica(tmp_path):
+def test_limpeza_de_moeda():
+    assert nash.limpar_moeda("1.500,50") == 1500.50
+    assert nash.limpar_moeda("800,25") == 800.25
+    assert nash.limpar_moeda("500") == 500.0
+    assert nash.limpar_moeda("NaN") == 0.0
+
+def test_integracao_custas_leinova_com_conta_grafica(tmp_path):
     # 1. Cria os dados do cenário que causava o erro
     df_param = pd.DataFrame([
         ['Processo', 'Teste Sincronizacao Custas'],
@@ -142,8 +148,8 @@ def test_integracao_custas_r1_com_conta_grafica(tmp_path):
         df_custas.to_excel(writer, sheet_name='Custas', index=False)
         df_deducoes.to_excel(writer, sheet_name='Deducoes', index=False)
         
-    # 3. Executa o motor do Nash System
-    nash.executar_nash(str(input_file), str(output_file))
+    # 3. Executa o motor do Nash System (como Path objects simulando o subprocess)
+    nash.executar_nash(input_file, output_file)
     
     # 4. Lê o Laudo gerado para validar a correção matemática
     assert output_file.exists(), "O laudo de liquidação não foi gerado!"
@@ -165,7 +171,7 @@ def test_integracao_custas_r1_com_conta_grafica(tmp_path):
             valor_exigivel = float(row[7]) 
             break
             
-    # Aserções de auditoria
-    assert "TJMG" in regra_aplicada or "R1" in regra_aplicada, f"Erro: A regra das custas não sincronizou. Registou: {regra_aplicada}"
+    # Aserções de auditoria atualizadas para a v3.0
+    assert "Lei 14.905" in regra_aplicada, f"Erro: A regra das custas não foi fixada na Lei Nova. Registou: {regra_aplicada}"
     assert valor_exigivel > 0.0, "Erro Crítico: O valor exigível das custas ficou a zeros na Conta Gráfica!"
     assert valor_exigivel > 464.64, "Erro: O valor exigível não sofreu atualização monetária."
