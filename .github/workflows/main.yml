@@ -26,7 +26,7 @@ jobs:
 
     - name: Fabricar o aplicativo Windows (OneFile)
       run: |
-        pyinstaller --noconfirm --windowed --onefile --icon=dr_nash.ico --add-data "dr_nash.ico;." nash.py
+        pyinstaller --noconfirm --windowed --onefile --name "nash" --icon=dr_nash.ico --add-data "dr_nash.ico;." interface_v3.py
 
     - name: Compilar o Instalador (Inno Setup)
       run: iscc gerador_nash.iss
