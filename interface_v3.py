@@ -27,12 +27,14 @@ class NashDataEntryGUI:
         self.tab_custas = ttk.Frame(self.notebook, padding=10)
         self.tab_deducoes = ttk.Frame(self.notebook, padding=10)
         self.tab_acordos = ttk.Frame(self.notebook, padding=10)
+        self.tab_dashboard = ttk.Frame(self.notebook, padding=10) # NOVA ABA DASHBOARD
 
         self.notebook.add(self.tab_parametros, text=" ⚙️ Parâmetros Gerais ")
         self.notebook.add(self.tab_danos, text=" 💰 Danos Principais ")
         self.notebook.add(self.tab_custas, text=" ⚖️ Custas ")
         self.notebook.add(self.tab_deducoes, text=" 📉 Deduções (Conta Gráfica) ")
         self.notebook.add(self.tab_acordos, text=" 🤝 Acordo Não Cumprido ")
+        self.notebook.add(self.tab_dashboard, text=" 📊 Visão Estratégica ") # NOVA ABA DASHBOARD
 
         action_frame = ttk.Frame(main_frame)
         action_frame.pack(fill="x", side="bottom")
@@ -59,6 +61,7 @@ class NashDataEntryGUI:
         self.montar_aba_custas()
         self.montar_aba_deducoes()
         self.montar_aba_acordos()
+        self.montar_aba_dashboard()
 
     # ================= ABA 1: PARÂMETROS =================
     def montar_aba_parametros(self):
@@ -72,6 +75,7 @@ class NashDataEntryGUI:
             ("Data da Citação", "Entry", ""),
             ("Data do Evento", "Entry", ""),
             ("Justiça Gratuita", "Combo", ["Não", "Sim"]),
+            ("Juros sobre Custas", "Combo", ["Sim (Após Trânsito)", "Não (Sem Juros)"]), # NOVO PARÂMETRO
             ("Pagamento Voluntário 15d", "Combo", ["Não se aplica", "Sim", "Não"]),
             ("Fazenda Pública", "Combo", ["Não", "Sim"]),
             ("Honorários Sucumbência (%)", "Entry", "10"),
@@ -176,9 +180,8 @@ class NashDataEntryGUI:
         scroll_y.pack(side="right", fill="y")
         self.tree_deducoes.pack(fill="both", expand=True)
 
-    # ================= ABA 5: ACORDO NÃO CUMPRIDO (NOVO MÓDULO) =================
+    # ================= ABA 5: ACORDO NÃO CUMPRIDO =================
     def montar_aba_acordos(self):
-        # Frame Superior: Parâmetros do Acordo
         frame_params = tk.LabelFrame(self.tab_acordos, text=" 📝 Parâmetros da Quebra de Acordo ", font=("Arial", 10, "bold"), padx=10, pady=10)
         frame_params.pack(fill="x", pady=(0, 10))
 
@@ -204,7 +207,7 @@ class NashDataEntryGUI:
                 if isinstance(default, str): widget.insert(0, default)
             elif tipo == "Combo":
                 widget = ttk.Combobox(frame_params, textvariable=var, values=default, state="readonly", width=38)
-                widget.current(1) # Default R2
+                widget.current(1)
                 
             widget.grid(row=row, column=col+1, sticky="w", padx=10, pady=5)
             col += 2
@@ -212,7 +215,6 @@ class NashDataEntryGUI:
                 col = 0
                 row += 1
 
-        # Frame Inferior: Parcelas Pagas
         frame_pagas = tk.LabelFrame(self.tab_acordos, text=" 💸 Parcelas Pagas (A Abater do Saldo) ", font=("Arial", 10, "bold"), padx=10, pady=5)
         frame_pagas.pack(fill="both", expand=True)
 
@@ -234,6 +236,90 @@ class NashDataEntryGUI:
         self.tree_acordo_pagas.configure(yscrollcommand=scroll_y_ac.set)
         scroll_y_ac.pack(side="right", fill="y")
         self.tree_acordo_pagas.pack(fill="both", expand=True)
+
+    # ================= ABA 6: DASHBOARD ESTRATÉGICO =================
+    def montar_aba_dashboard(self):
+        # Header
+        frame_header = ttk.Frame(self.tab_dashboard)
+        frame_header.pack(fill="x", pady=10)
+        ttk.Label(frame_header, text="Viabilidade Financeira da Ação", font=("Arial", 14, "bold")).pack(side="left", padx=10)
+        ttk.Button(frame_header, text="🔄 Atualizar Gráfico", command=self.atualizar_dashboard).pack(side="right", padx=10)
+
+        # Painel Central (Gráfico + Texto)
+        self.frame_grafico = ttk.Frame(self.tab_dashboard)
+        self.frame_grafico.pack(fill="both", expand=True, pady=20)
+
+        # Canvas para o Gráfico de Pizza Nativo
+        self.canvas_pizza = tk.Canvas(self.frame_grafico, width=300, height=300, bg="#f0f0f0", highlightthickness=0)
+        self.canvas_pizza.pack(side="left", padx=30)
+
+        # Labels de Status
+        frame_status = ttk.Frame(self.frame_grafico)
+        frame_status.pack(side="left", fill="both", expand=True, padx=20)
+
+        self.lbl_status = tk.Label(frame_status, text="Aguardando dados...", font=("Arial", 16, "bold"))
+        self.lbl_status.pack(anchor="w", pady=(20, 10))
+
+        self.lbl_detalhes = tk.Label(frame_status, text="", font=("Arial", 12), justify="left")
+        self.lbl_detalhes.pack(anchor="w")
+
+    def atualizar_dashboard(self):
+        # 1. Coleta dados históricos limpos
+        total_pedido = 0.0
+        for item in self.tree_danos.get_children():
+            valores = self.tree_danos.item(item, 'values')
+            val_pedido = float(valores[6]) if len(valores) > 6 and valores[6] else float(valores[3])
+            total_pedido += val_pedido
+
+        total_custas = 0.0
+        for item in self.tree_custas.get_children():
+            valores = self.tree_custas.item(item, 'values')
+            total_custas += float(valores[3]) if len(valores) > 3 and valores[3] else 0.0
+
+        if total_pedido <= 0:
+            self.lbl_status.config(text="Sem dados de pedido inicial para análise.", fg="gray")
+            self.canvas_pizza.delete("all")
+            self.lbl_detalhes.config(text="")
+            return
+
+        proporcao = total_custas / total_pedido
+        
+        # 2. Lógica Cruzada: Atuação vs Justiça Gratuita
+        atuacao = self.vars_param.get("Atuação", tk.StringVar()).get().strip().upper()
+        jg_ativa = self.vars_param.get("Justiça Gratuita", tk.StringVar()).get().strip() == "Sim"
+        parte_adversa = "Autor" if atuacao == "RÉU" else "Réu"
+
+        # 3. Renderização Gráfica
+        self.canvas_pizza.delete("all")
+        angulo_custas = min(360, (proporcao * 360))
+        angulo_restante = max(0, 360 - angulo_custas)
+
+        if proporcao >= 0.70:
+            cor_custas = "#FF4C4C" # Vermelho Crítico
+            texto_status = "🔴 INVIABILIDADE ECONÔMICA"
+        elif proporcao >= 0.50:
+            cor_custas = "#FFD700" # Amarelo Alerta
+            texto_status = "🟡 ATENÇÃO: RISCO FINANCEIRO"
+        else:
+            cor_custas = "#4CAF50" # Verde Saudável
+            texto_status = "🟢 OPERAÇÃO SAUDÁVEL"
+
+        self.canvas_pizza.create_arc(10, 10, 290, 290, start=90, extent=-angulo_custas, fill=cor_custas, outline="white", width=2)
+        self.canvas_pizza.create_arc(10, 10, 290, 290, start=90-angulo_custas, extent=-angulo_restante, fill="#2196F3", outline="white", width=2)
+
+        # 4. Construção do Relatório Textual
+        self.lbl_status.config(text=texto_status, fg=cor_custas)
+        
+        texto_detalhes = f"Valor do Pedido Original: R$ {total_pedido:,.2f}\n"
+        texto_detalhes += f"Custas Adiantadas: R$ {total_custas:,.2f}\n"
+        texto_detalhes += f"Comprometimento: {proporcao*100:.2f}%\n\n"
+
+        if jg_ativa:
+            texto_detalhes += f"⚠ Oponente ({parte_adversa}) possui Justiça Gratuita.\nMesmo com êxito, o desembolso de custas é um Sunk Cost (irrecuperável)."
+        else:
+            texto_detalhes += f"Oponente ({parte_adversa}) NÃO possui Justiça Gratuita.\nHá expectativa legal de recuperar as custas no fim do processo."
+
+        self.lbl_detalhes.config(text=texto_detalhes)
 
 
     # ================= LÓGICA DE POPUPS UNIFICADA =================
@@ -318,7 +404,6 @@ class NashDataEntryGUI:
         try:
             wb = load_workbook(caminho, data_only=True)
             
-            # Importa Parâmetros
             if 'Parametros' in wb.sheetnames:
                 ws = wb['Parametros']
                 for row in ws.iter_rows(values_only=True):
@@ -328,7 +413,6 @@ class NashDataEntryGUI:
                         if isinstance(valor, datetime): valor = valor.strftime("%d/%m/%Y")
                         if chave in self.vars_param: self.vars_param[chave].set(str(valor))
                             
-            # Função genérica para importar trees
             def carregar_tree(sheet_name, tree_widget, cols_esperadas):
                 if sheet_name in wb.sheetnames:
                     for item in tree_widget.get_children(): tree_widget.delete(item)
@@ -349,7 +433,6 @@ class NashDataEntryGUI:
             carregar_tree('Custas', self.tree_custas, ['ID / Folha', 'Descrição', 'Data Desembolso', 'Valor Histórico'])
             carregar_tree('Deducoes', self.tree_deducoes, ['ID / Folha', 'Data bloqueio/deposito', 'Valor'])
             
-            # Importar Acordos
             if 'Acordo_Params' in wb.sheetnames:
                 ws = wb['Acordo_Params']
                 for row in ws.iter_rows(values_only=True):
@@ -361,7 +444,10 @@ class NashDataEntryGUI:
                         
             carregar_tree('Acordo_Pagas', self.tree_acordo_pagas, ['Identificação / Parcela', 'Data do Pagamento', 'Valor Pago (R$)'])
             
+            # Atualiza o dashboard automaticamente após carregar tudo
+            self.root.after(100, self.atualizar_dashboard)
             messagebox.showinfo("Sucesso", "Planilha e histórico carregados com sucesso!")
+            
         except Exception as e:
             messagebox.showerror("Erro ao Importar", f"Ocorreu um erro ao tentar ler a planilha:\n{str(e)}")
 
@@ -426,15 +512,23 @@ class NashDataEntryGUI:
             
             def thread_calculo():
                 try:
-                    nash.executar_nash(str(nome_template), str(nome_laudo_xls))
+                    resultado = nash.executar_nash(str(nome_template), str(nome_laudo_xls))
                     def sucesso():
-                        messagebox.showinfo("Cálculo Concluído", f"Processamento finalizado com sucesso!\n\nArquivos guardados em:\n{pasta_destino}")
+                        msg_base = f"Processamento finalizado com sucesso!\n\nArquivos guardados em:\n{pasta_destino}"
+                        
+                        # Captura o retorno do backend e dispara alerta final se houver risco
+                        if isinstance(resultado, dict) and resultado.get("nivel") in ["ALERTA", "CRITICO"]:
+                            msg_alerta = resultado.get("mensagem", "")
+                            messagebox.showwarning("Aviso de Viabilidade Financeira", f"{msg_base}\n\n⚠️ {msg_alerta}")
+                        else:
+                            messagebox.showinfo("Cálculo Concluído", msg_base)
+                            
                         self.btn_processar.config(state="normal")
                     self.root.after(0, sucesso)
                 except Exception as e:
                     erro_msg = str(e)
                     def falha():
-                        messagebox.showerror("Erro no Motor Matemático", f"O cálculo falhou:\n\n{erro_msg}\n\nNota: Se for um Acordo Não Cumprido, o motor matemático correspondente será ativado amanhã.")
+                        messagebox.showerror("Erro no Motor Matemático", f"O cálculo falhou:\n\n{erro_msg}")
                         self.btn_processar.config(state="normal")
                     self.root.after(0, falha)
 

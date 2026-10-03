@@ -9,7 +9,7 @@ import platform
 import subprocess
 from pathlib import Path
 
-__version__ = "4.0.0" 
+__version__ = "4.0.1" 
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -255,7 +255,7 @@ def converter_para_pdf(caminho_xlsx):
         return True
     except: return False
 
-# --- FUNÇÃO AUXILIAR DE HIGIENIZAÇÃO DE MOEDA ---
+# --- FUNÇÕES AUXILIARES ---
 def limpar_moeda(val):
     if isinstance(val, (int, float)): return float(val)
     val = str(val).strip()
@@ -270,6 +270,34 @@ def parse_percent(val):
         num = float(str(val).replace('%', '').replace(',', '.').strip())
         return num / 100.0 if num > 1 else num
     except: return 1.0
+
+# --- NOVO: MÓDULO ANALÍTICO (VIABILIDADE FINANCEIRA) ---
+def analisar_viabilidade_financeira(df_danos, df_custas):
+    if df_danos.empty or df_custas.empty:
+        return 0.0, "NORMAL", ""
+        
+    total_pedido = df_danos['Valor Pedido Inicial'].sum()
+    if total_pedido <= 0:
+        total_pedido = df_danos['Valor Histórico'].sum()
+        
+    if total_pedido <= 0:
+        return 0.0, "NORMAL", ""
+        
+    total_custas = df_custas['Valor Histórico'].sum()
+    proporcao = total_custas / total_pedido
+    
+    if proporcao >= 0.70:
+        nivel = "CRITICO"
+        msg = f"Inviabilidade Econômica: Custas históricas (R$ {total_custas:,.2f}) atingiram {proporcao*100:.2f}% do pedido inicial."
+    elif proporcao >= 0.50:
+        nivel = "ALERTA"
+        msg = f"Risco Financeiro: Custas históricas (R$ {total_custas:,.2f}) representam {proporcao*100:.2f}% do pedido inicial."
+    else:
+        nivel = "NORMAL"
+        msg = ""
+        
+    if msg: logging.info(f"[VIABILIDADE] {msg}")
+    return proporcao, nivel, msg
 
 # --- 5. PROCESSAMENTO CENTRAL ---
 def executar_nash(caminho_entrada, arquivo_saida):
@@ -292,7 +320,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
 
     data_calculo = pd.Timestamp.today()
 
-    # --- VERIFICAÇÃO DE MÓDULO: ACORDO NÃO CUMPRIDO ---
     tem_acordo = False
     if 'Acordo_Params' in xls.sheet_names:
         df_acordo = pd.read_excel(xls, sheet_name='Acordo_Params', header=None, index_col=0)
@@ -306,6 +333,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
         valor_confessado = limpar_moeda(get_param('Valor Original Confessado (Sem Desconto)', 0.0, df_orig=df_acordo))
         multa_perc = parse_percent(get_param('Multa Moratória Contratual (%)', 10, df_orig=df_acordo))
         hon_perc = parse_percent(get_param('Honorários de Retomada/Execução (%)', 20, df_orig=df_acordo))
+        
+        houve_inadimplemento = str(get_param('Pagamento Voluntário 15d', '')).strip().upper() in ['NÃO', 'NAO']
+        jg = str(get_param('Justiça Gratuita', '')).strip().upper() == 'SIM'
         
         try:
             df_pagas = pd.read_excel(xls, sheet_name='Acordo_Pagas').dropna(subset=['Valor Pago (R$)'], how='any')
@@ -339,17 +369,25 @@ def executar_nash(caminho_entrada, arquivo_saida):
         base_honorarios = subtotal_atualizado + valor_multa
         valor_hon = base_honorarios * hon_perc
         
-        total_geral = base_honorarios + valor_hon
+        total_acordo_quebrado = base_honorarios + valor_hon
         
-        gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_pago, saldo_devedor_base, f_cm_ac, f_jur_ac, saldo_atualizado_princ, saldo_atualizado_juros, subtotal_atualizado, multa_perc, valor_multa, hon_perc, valor_hon, total_geral, df_pagas, arquivo_saida)
-        return
+        multa_523 = total_acordo_quebrado * 0.10 if houve_inadimplemento else 0.0
+        hon_523 = total_acordo_quebrado * 0.10 if (houve_inadimplemento and not jg) else 0.0
+        
+        total_geral = total_acordo_quebrado + multa_523 + hon_523
+        
+        gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_pago, saldo_devedor_base, f_cm_ac, f_jur_ac, saldo_atualizado_princ, saldo_atualizado_juros, subtotal_atualizado, multa_perc, valor_multa, hon_perc, valor_hon, multa_523, hon_523, total_geral, df_pagas, arquivo_saida)
+        return {"proporcao": 0.0, "nivel": "NORMAL", "mensagem": ""}
 
-    # --- MÓDULO PADRÃO (DANOS, CUSTAS E CONTA GRÁFICA) ---
+    # --- MÓDULO PADRÃO ---
     processo = str(get_param('Processo', 'N/A'))
     atuacao = str(get_param('Atuação', 'RÉU')).strip().upper() 
     data_transito_c, teve_transito = get_param('Data do Trânsito', is_date=True), pd.notna(get_param('Data do Trânsito', is_date=True))
     data_sentenca = get_param('Data da Sentença', is_date=True)
-    jg = str(get_param('Justiça Gratuita', '')).strip().upper() == 'SIM'
+    
+    # JG nativo refere-se à parte adversa (quem pagaria custas/honorários)
+    jg_adversa = str(get_param('Justiça Gratuita', '')).strip().upper() == 'SIM'
+    
     houve_inadimplemento = str(get_param('Pagamento Voluntário 15d', '')).strip().upper() in ['NÃO', 'NAO']
     is_fazenda = str(get_param('Fazenda Pública', 'NÃO')).strip().upper() == 'SIM'
     if is_fazenda: houve_inadimplemento = False
@@ -388,6 +426,11 @@ def executar_nash(caminho_entrada, arquivo_saida):
     df_custas['Fator Juros'] = 0.0
     try: df_custas['Data Desembolso'] = pd.to_datetime(df_custas['Data Desembolso'], format='mixed', dayfirst=True, errors='coerce')
     except: pass
+
+    # --- ANÁLISE DE VIABILIDADE ESTRATÉGICA ---
+    proporcao_custas, nivel_alerta_custas, msg_alerta_custas = analisar_viabilidade_financeira(df_danos, df_custas)
+    if nivel_alerta_custas in ["ALERTA", "CRITICO"]:
+        gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao_custas, nivel_alerta_custas, df_danos, df_custas, arquivo_saida)
     
     datas = pd.concat([df_danos['Data Desembolso'], df_custas['Data Desembolso'], pd.Series([data_citacao, data_evento, data_propositura])]).dropna()
     df_bcb = carregar_taxas_bcb(datas.min() if not datas.empty else pd.NaT)
@@ -409,7 +452,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
         elif regra_alvo == 'R7': return calc_tjmg_taxalegal_retroativa(tabela_tjmg, df_bcb, d_cm, d_jur, d_calc)
         else: return calc_selic_pura(df_bcb, d_cm, d_jur, d_calc)
 
-    # PROCESSAMENTO DE DANOS
     for idx, row in df_danos.iterrows():
         data_cm = row['Data Desembolso']
         if pd.isna(data_cm): continue
@@ -473,7 +515,10 @@ def executar_nash(caminho_entrada, arquivo_saida):
             df_danos.at[idx, 'Risco Atual'] = risco_atualizado_total
             df_danos.at[idx, 'Proveito'] = max(0, risco_atualizado_total - val_final_item)
 
-    # PROCESSAMENTO DE CUSTAS
+    # Parâmetro de Juros sobre Custas com fallback para 'Sim' (retrocompatibilidade)
+    juros_custas_param = str(get_param('Juros sobre Custas', 'Sim')).strip().upper()
+    aplica_juros_custas = 'NÃO' not in juros_custas_param and 'NAO' not in juros_custas_param
+
     for idx, row in df_custas.iterrows():
         data_cm_c = row['Data Desembolso']
         if pd.isna(data_cm_c): continue
@@ -484,9 +529,14 @@ def executar_nash(caminho_entrada, arquivo_saida):
         else:
             f_cm, f_jur = calc_leinova_pura(df_bcb, data_cm_c, data_jur_c, data_calculo)
             nome_base_regra = "Lei 14.905/24"
+            
+        if not aplica_juros_custas:
+            f_jur = 0.0
+            nome_base_regra += " (Sem Juros)"
+            
         val_princ = (row['Valor Histórico'] * f_cm) * prop_custas
         val_jur = val_princ * f_jur
-        df_custas.at[idx, 'Exigível'] = 0.0 if jg else val_princ + val_jur
+        df_custas.at[idx, 'Exigível'] = 0.0 if jg_adversa else val_princ + val_jur
         df_custas.at[idx, 'Fator CM'] = f_cm
         df_custas.at[idx, 'Fator Juros'] = f_jur
         df_custas.at[idx, 'Desc_Regra'] = f"{nome_base_regra} (Trânsito)" if teve_transito else f"{nome_base_regra} (S/ Juros)"
@@ -500,14 +550,13 @@ def executar_nash(caminho_entrada, arquivo_saida):
 
     total_final_processo = 0.0
     
-    # CÁLCULO GERAL E CONTA GRÁFICA
     if not tem_deducao:
         total_princ_danos = sum([r['Valor Atualizado'] / (1 + r['Fator Juros']) for _, r in df_danos.iterrows() if r['Valor Histórico']>0])
         total_juros_danos = df_danos['Valor Atualizado'].sum() - total_princ_danos
         
         total_princ_custas = total_juros_custas = 0.0
         for idx, row in df_custas.iterrows():
-            if jg: continue
+            if jg_adversa: continue
             val_princ = (row['Valor Histórico'] * row['Fator CM']) * prop_custas
             total_princ_custas += val_princ; total_juros_custas += val_princ * row['Fator Juros']
 
@@ -525,15 +574,15 @@ def executar_nash(caminho_entrada, arquivo_saida):
         else: hon_calc_princ = (subtotal_princ + subtotal_juros) * hon_perc
             
         hon_calc_princ *= prop_hon; hon_calc_juros *= prop_hon
-        hon_exigivel_princ = 0.0 if jg else hon_calc_princ
-        hon_exigivel_juros = 0.0 if jg else hon_calc_juros
+        hon_exigivel_princ = 0.0 if jg_adversa else hon_calc_princ
+        hon_exigivel_juros = 0.0 if jg_adversa else hon_calc_juros
 
         base_multa = subtotal_princ + subtotal_juros + hon_exigivel_princ + hon_exigivel_juros
         valor_multa = (base_multa * 0.10) if houve_inadimplemento else 0.0
-        hon_523 = (base_multa * 0.10) if (houve_inadimplemento and not jg) else 0.0
+        hon_523 = (base_multa * 0.10) if (houve_inadimplemento and not jg_adversa) else 0.0
         
         total_final_processo = base_multa + valor_multa + hon_523
-        gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, (subtotal_princ+subtotal_juros), (hon_exigivel_princ+hon_exigivel_juros), valor_multa, hon_523, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, [], base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
+        gerar_laudo_excel(processo, teve_transito, jg_adversa, df_danos, df_custas, (subtotal_princ+subtotal_juros), (hon_exigivel_princ+hon_exigivel_juros), valor_multa, hon_523, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, [], base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
     else:
         historico_cg = []; saldo_principal = 0.0; saldo_juros = 0.0
@@ -556,7 +605,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
             
         for idx, row in df_custas.iterrows():
             data_cm_c = row['Data Desembolso']
-            if pd.isna(data_cm_c) or data_cm_c > data_corte or jg: continue
+            if pd.isna(data_cm_c) or data_cm_c > data_corte or jg_adversa: continue
             data_jur_c = data_transito_c if teve_transito else pd.NaT
             f_cm, f_jur = calc_fazenda_publica(df_bcb, data_cm_c, data_jur_c, data_corte) if is_fazenda else calc_leinova_pura(df_bcb, data_cm_c, data_jur_c, data_corte)
             val_princ = (row['Valor Histórico'] * f_cm) * prop_custas
@@ -565,15 +614,15 @@ def executar_nash(caminho_entrada, arquivo_saida):
         historico_cg.append((data_corte, "Atualização até 1º Bloqueio", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
         
         hon_suc_princ, hon_suc_jur = 0.0, 0.0
-        if base_hon == 'VALOR DA CAUSA' and valor_causa > 0 and pd.notna(data_propositura) and not jg:
+        if base_hon == 'VALOR DA CAUSA' and valor_causa > 0 and pd.notna(data_propositura) and not jg_adversa:
             f_cm_hon, _ = get_fator_calculo(regra_predominante, data_propositura, pd.NaT, data_corte)
             hon_suc_princ = ((valor_causa * f_cm_hon) * hon_perc) * prop_hon
-        elif hon_fixo > 0 and pd.notna(data_sentenca) and not jg:
+        elif hon_fixo > 0 and pd.notna(data_sentenca) and not jg_adversa:
             f_cm, f_jur = get_fator_calculo(regra_predominante, data_sentenca, data_transito_c if teve_transito else pd.NaT, data_corte)
             hon_suc_princ = (hon_fixo * f_cm) * prop_hon
             hon_suc_jur = hon_suc_princ * f_jur
-        elif hon_fixo > 0 and not jg: hon_suc_princ = hon_fixo * prop_hon
-        elif not jg: hon_suc_princ = ((saldo_principal + saldo_juros) * hon_perc) * prop_hon
+        elif hon_fixo > 0 and not jg_adversa: hon_suc_princ = hon_fixo * prop_hon
+        elif not jg_adversa: hon_suc_princ = ((saldo_principal + saldo_juros) * hon_perc) * prop_hon
             
         if hon_suc_princ > 0 or hon_suc_jur > 0:
             saldo_principal += hon_suc_princ; saldo_juros += hon_suc_jur
@@ -584,7 +633,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
             multa_523 = base_multa * 0.10
             saldo_principal += multa_523
             historico_cg.append((data_corte, "(+) Multa Art. 523 CPC (10%)", multa_523, 0.0, 0.0, saldo_principal+saldo_juros))
-            if not jg:
+            if not jg_adversa:
                 hon_523 = base_multa * 0.10
                 saldo_principal += hon_523
                 historico_cg.append((data_corte, "(+) Honorários Art. 523 CPC (10%)", hon_523, 0.0, 0.0, saldo_principal+saldo_juros))
@@ -649,14 +698,97 @@ def executar_nash(caminho_entrada, arquivo_saida):
             historico_cg.append((data_calculo, "Atualização Final (Hoje)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
             
         total_final_processo = saldo_principal + saldo_juros
-        gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, 0, 0, 0, 0, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico_cg, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
+        gerar_laudo_excel(processo, teve_transito, jg_adversa, df_danos, df_custas, 0, 0, 0, 0, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico_cg, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
 
     if 'AUTOR' not in atuacao and 'Risco Atual' in df_danos.columns and df_danos['Risco Atual'].sum() > 0:
         gerar_relatorio_exito_cliente(processo, df_danos[df_danos['Risco Atual'] > 0], arquivo_saida)
 
+    return {"proporcao": proporcao_custas, "nivel": nivel_alerta_custas, "mensagem": msg_alerta_custas}
 
-# --- 6. GERAÇÃO DE ARQUIVO ESPECÍFICO PARA ACORDO NÃO CUMPRIDO ---
-def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_pago, saldo_base, f_cm, f_jur, val_princ, val_juros, subtotal, multa_perc, val_multa, hon_perc, val_hon, total_geral, df_pagas, arquivo_saida):
+# --- 6. GERAÇÃO DE RELATÓRIO ESTRATÉGICO INTERNO (NOVO) ---
+def gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao, nivel, df_danos, df_custas, arquivo_saida_base):
+    arquivo_saida_base = Path(arquivo_saida_base)
+    wb = Workbook()
+    ws = wb.active
+    
+    tipo = "INVIABILIDADE ECONÔMICA" if nivel == "CRITICO" else "ATENÇÃO FINANCEIRA"
+    ws.title = "Visão Estratégica"
+    
+    f_titulo = Font(name="Arial", size=14, bold=True, color="FFFFFF")
+    f_negrito = Font(name="Arial", size=11, bold=True)
+    f_normal = Font(name="Arial", size=11)
+    
+    cor_fundo = "FF0000" if nivel == "CRITICO" else "FFC000"
+    fundo_alerta = PatternFill(start_color=cor_fundo, end_color=cor_fundo, fill_type="solid")
+    fundo_cinza = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+    borda = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    moeda = 'R$ #,##0.00'
+
+    ws.merge_cells('A1:E1'); ws['A1'] = f"RELATÓRIO GERENCIAL INTERNO - {tipo}"
+    ws['A1'].font = f_titulo; ws['A1'].fill = fundo_alerta; ws['A1'].alignment = Alignment(horizontal="center", vertical="center")
+    
+    ws.merge_cells('A2:E2'); ws['A2'] = f"Processo: {processo}"
+    ws['A2'].alignment = Alignment(horizontal="center"); ws['A2'].font = Font(name="Arial", size=10, italic=True)
+
+    ws['A4'] = "Este é um documento de controle estratégico. NÃO JUNTAR AOS AUTOS."
+    ws['A4'].font = Font(name="Arial", size=10, bold=True, color="FF0000")
+
+    # Cálculos Históricos vs Atualizados
+    total_pedido_hist = df_danos['Valor Pedido Inicial'].sum()
+    if total_pedido_hist <= 0: total_pedido_hist = df_danos['Valor Histórico'].sum()
+    total_custas_hist = df_custas['Valor Histórico'].sum()
+    
+    total_pedido_atualizado = df_danos['Risco Atual'].sum() if 'Risco Atual' in df_danos.columns else df_danos['Valor Atualizado'].sum()
+    total_custas_atualizadas = df_custas['Exigível'].sum() if not df_custas.empty else 0.0
+
+    linha = 6
+    cabs = ['Métrica', 'Valor Original (Histórico)', 'Valor Atualizado (Hoje)', 'Comprometimento']
+    for col, texto in enumerate(cabs, 1):
+        ws.cell(row=linha, column=col, value=texto).font = f_negrito
+        ws.cell(row=linha, column=col).fill = fundo_cinza
+        ws.cell(row=linha, column=col).border = borda
+    
+    linha += 1
+    ws.cell(row=linha, column=1, value="Expectativa Principal (Pedido)").border = borda
+    ws.cell(row=linha, column=2, value=total_pedido_hist).number_format = moeda; ws.cell(row=linha, column=2).border = borda
+    ws.cell(row=linha, column=3, value=total_pedido_atualizado).number_format = moeda; ws.cell(row=linha, column=3).border = borda
+    ws.cell(row=linha, column=4, value="100%").border = borda
+    
+    linha += 1
+    ws.cell(row=linha, column=1, value="Despesas Adiantadas (Custas)").border = borda
+    ws.cell(row=linha, column=2, value=total_custas_hist).number_format = moeda; ws.cell(row=linha, column=2).border = borda
+    ws.cell(row=linha, column=3, value=total_custas_atualizadas).number_format = moeda; ws.cell(row=linha, column=3).border = borda
+    ws.cell(row=linha, column=4, value=proporcao).number_format = '0.00%'; ws.cell(row=linha, column=4).border = borda; ws.cell(row=linha, column=4).font = f_negrito
+    
+    linha += 2
+    ws.cell(row=linha, column=1, value="ANÁLISE DE RISCO PATRIMONIAL:").font = f_negrito
+    linha += 1
+    
+    parte_adversa = "Autor" if atuacao == "RÉU" else "Réu"
+    
+    if jg_adversa:
+        msg_risco = f"Oponente ({parte_adversa}) POSSUI Justiça Gratuita. O adiantamento de R$ {total_custas_hist:,.2f} é considerado Sunk Cost (Custo Irrecuperável), pois a exigibilidade ficará suspensa (Art. 98, §3º CPC)."
+    else:
+        msg_risco = f"Oponente ({parte_adversa}) NÃO possui Justiça Gratuita. Há expectativa legal de reembolso das custas em caso de sucumbência favorável, dependendo de busca patrimonial futura."
+        
+    ws.cell(row=linha, column=1, value=msg_risco)
+    ws.merge_cells(f'A{linha}:E{linha}')
+    ws.cell(row=linha, column=1).alignment = Alignment(wrap_text=True)
+
+    ws.column_dimensions['A'].width = 35; ws.column_dimensions['B'].width = 25
+    ws.column_dimensions['C'].width = 25; ws.column_dimensions['D'].width = 20
+    ws.row_dimensions[linha].height = 45
+    
+    prefixo = "Relatorio_Inviabilidade_" if nivel == "CRITICO" else "Relatorio_Atencao_"
+    nome_base = arquivo_saida_base.name.replace('laudo ', prefixo)
+    path_final = arquivo_saida_base.parent / nome_base
+    
+    wb.save(str(path_final))
+    logging.info(f"Relatório estratégico gerado: {path_final.name}")
+
+
+# --- 7. GERAÇÃO DE ARQUIVOS PRINCIPAIS (ACORDO, LAUDO PADRÃO E ÊXITO) ---
+def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_pago, saldo_base, f_cm, f_jur, val_princ, val_juros, subtotal, multa_perc, val_multa, hon_perc, val_hon, multa_523, hon_523, total_geral, df_pagas, arquivo_saida):
     wb = Workbook()
     ws = wb.active
     ws.title = "Quebra de Acordo"
@@ -664,7 +796,7 @@ def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_p
     f_titulo = Font(name="Arial", size=14, bold=True, color="FFFFFF")
     f_negrito = Font(name="Arial", size=11, bold=True)
     f_normal = Font(name="Arial", size=11)
-    fundo_escuro = PatternFill(start_color="800000", end_color="800000", fill_type="solid") # Vermelho Escuro para Quebra
+    fundo_escuro = PatternFill(start_color="800000", end_color="800000", fill_type="solid") 
     fundo_cinza = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
     borda = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     moeda = 'R$ #,##0.00'
@@ -731,6 +863,11 @@ def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_p
     if val_hon > 0:
         add_total(f"(+) Honorários de Execução/Retomada ({hon_perc*100:.0f}%):", val_hon)
         
+    if multa_523 > 0:
+        add_total("(+) Multa Art. 523 CPC (10%):", multa_523)
+    if hon_523 > 0:
+        add_total("(+) Honorários Art. 523 CPC (10%):", hon_523)
+        
     add_total("TOTAL GERAL DEVIDO PELO DESCUMPRIMENTO:", total_geral, True, True)
     linha += 1
 
@@ -748,7 +885,6 @@ def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_p
     wb.save(str(path_final))
     converter_para_pdf(path_final)
 
-# --- 7. GERAÇÕES DE ARQUIVOS (LAUDO PADRÃO E ÊXITO) ---
 def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo):
     wb = Workbook()
     ws = wb.active
@@ -769,7 +905,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
 
     ws['A4'] = "Processo:"; ws['B4'] = processo
     ws['A5'] = "Termo Juros (Danos):"; ws['B5'] = termo_juros_raw.title()
-    ws['A6'] = "Justiça Gratuita:"; ws['B6'] = "DEFERIDA (Custas Inexigíveis)" if jg else "NÃO REQUERIDA / INDEFERIDA"
+    ws['A6'] = "Justiça Gratuita (Adversa):"; ws['B6'] = "DEFERIDA (Custas Inexigíveis)" if jg else "NÃO REQUERIDA / INDEFERIDA"
     ws['D4'] = "Base Honorários:"; ws['E4'] = base_hon.title()
     
     linha_cab = 5
@@ -783,11 +919,9 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     for r in range(4, 7): ws.cell(row=r, column=1).font = f_negrito; ws.cell(row=r, column=4).font = f_negrito
 
     linha = 8
-    
     tem_transicao_global = df_danos['Tem_Transicao'].any() if 'Tem_Transicao' in df_danos.columns else False
 
     if tem_transicao_global and not historico:
-        # Tabela FASE 1
         ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "1. DANOS MATERIAIS - FASE 1: ATÉ 30/08/2024 (Consolidação do Regime Antigo)"
         ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
 
@@ -823,7 +957,6 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
         linha += 2
 
-        # Tabela FASE 2
         ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "1.1. DANOS MATERIAIS - FASE 2: APÓS 30/08/2024 (Lei 14.905/24 - IPCA + Taxa Legal)"
         ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
 
@@ -894,11 +1027,8 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
 
         ws.merge_cells(f'A{linha}:G{linha}')
         ws.cell(row=linha, column=1, value="Subtotal Danos Materiais:").alignment = Alignment(horizontal="right")
-        ws.cell(row=linha, column=1).font = f_negrito
-        ws.cell(row=linha, column=1).fill = fundo_cinza
-        ws.cell(row=linha, column=8, value=subtotal_danos).number_format = moeda
-        ws.cell(row=linha, column=8).font = f_negrito
-        ws.cell(row=linha, column=8).fill = fundo_cinza
+        ws.cell(row=linha, column=1).font = f_negrito; ws.cell(row=linha, column=1).fill = fundo_cinza
+        ws.cell(row=linha, column=8, value=subtotal_danos).number_format = moeda; ws.cell(row=linha, column=8).font = f_negrito; ws.cell(row=linha, column=8).fill = fundo_cinza
         for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
         linha += 2
         
@@ -932,11 +1062,8 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
 
     ws.merge_cells(f'A{linha}:G{linha}')
     ws.cell(row=linha, column=1, value="Subtotal Custas:").alignment = Alignment(horizontal="right")
-    ws.cell(row=linha, column=1).font = f_negrito
-    ws.cell(row=linha, column=1).fill = fundo_cinza
-    ws.cell(row=linha, column=8, value=subtotal_custas).number_format = moeda
-    ws.cell(row=linha, column=8).font = f_negrito
-    ws.cell(row=linha, column=8).fill = fundo_cinza
+    ws.cell(row=linha, column=1).font = f_negrito; ws.cell(row=linha, column=1).fill = fundo_cinza
+    ws.cell(row=linha, column=8, value=subtotal_custas).number_format = moeda; ws.cell(row=linha, column=8).font = f_negrito; ws.cell(row=linha, column=8).fill = fundo_cinza
     for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
     linha += 2
 
@@ -1021,14 +1148,13 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     converter_para_pdf(path_final)
 
 def gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida_base):
-    arquivo_saida_base = Path(arquivo_saida_base) # <--- Correção (Conversão obrigatória para Path)
+    arquivo_saida_base = Path(arquivo_saida_base)
     wb = Workbook()
     ws = wb.active
     ws.title = "Relatório de Êxito"
     
     f_titulo = Font(name="Arial", size=14, bold=True, color="FFFFFF")
     f_negrito = Font(name="Arial", size=11, bold=True)
-    f_normal = Font(name="Arial", size=11)
     f_sucesso = Font(name="Arial", size=12, bold=True, color="107C41") 
     
     fundo_escuro = PatternFill(start_color="1F3864", end_color="1F3864", fill_type="solid") 
@@ -1073,9 +1199,7 @@ def gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida_base):
     ws.cell(row=linha, column=1).alignment = Alignment(horizontal="right")
     ws.cell(row=linha, column=2, value=soma_risco).number_format = moeda; ws.cell(row=linha, column=2).font = f_negrito
     ws.cell(row=linha, column=3, value=soma_condenacao).number_format = moeda; ws.cell(row=linha, column=3).font = f_negrito
-    
-    ws.cell(row=linha, column=4, value=soma_proveito).number_format = moeda; ws.cell(row=linha, column=4).font = f_sucesso
-    ws.cell(row=linha, column=4).fill = fundo_verde
+    ws.cell(row=linha, column=4, value=soma_proveito).number_format = moeda; ws.cell(row=linha, column=4).font = f_sucesso; ws.cell(row=linha, column=4).fill = fundo_verde
     
     for c in range(1, 5): ws.cell(row=linha, column=c).border = borda
 
@@ -1099,3 +1223,22 @@ def gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida_base):
     wb.save(str(path_final))
     logging.info(f"Relatório de Êxito Cliente gerado com sucesso: {path_final.name}")
     converter_para_pdf(path_final)
+
+class NashGUI:
+    pass 
+
+if __name__ == "__main__":
+    if len(sys.argv) > 3:
+        arquivo_entrada = Path(sys.argv[1])
+        arquivo_saida = Path(sys.argv[2])
+        try:
+            logging.info(f"Modo Backend ativado para {arquivo_entrada.name}")
+            executar_nash(arquivo_entrada, arquivo_saida)
+            logging.info("Cálculo concluído com sucesso no backend.")
+            print("SUCESSO") 
+            sys.exit(0)
+        except Exception as e:
+            tb_str = traceback.format_exc()
+            logging.error(f"Erro fatal no backend:\n{tb_str}")
+            print(f"ERRO: {str(e)}", file=sys.stderr)
+            sys.exit(1)

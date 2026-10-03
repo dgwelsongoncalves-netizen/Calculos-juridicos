@@ -2,7 +2,6 @@ import nash
 import pandas as pd
 import argparse
 
-# Carrega o Pandas dentro do nash.py para liberar as bibliotecas
 nash.preload_heavy_libs()
 
 def simular_regras(valor, data_inicio, data_fim):
@@ -18,12 +17,11 @@ def simular_regras(valor, data_inicio, data_fim):
     d_fim = pd.to_datetime(data_fim, dayfirst=True)
     
     print(f"\n=============================================")
-    print(f"💰 SIMULADOR DE BOLSO - NASH SYSTEM")
+    print(f"💰 SIMULADOR DE BOLSO - NASH SYSTEM v4.0")
     print(f"Valor Histórico: R$ {valor:,.2f}")
     print(f"Período: {data_inicio} até {data_fim}")
     print(f"=============================================\n")
     
-    # Mapeamento universal de todas as regras matemáticas do Nash
     regras = {
         'R1 (TJMG + 1%)': lambda: nash.calc_tjmg_juros(tjmg, d_ini, d_ini, d_fim),
         'R2 (Selic Pura)': lambda: nash.calc_selic_pura(bcb, d_ini, d_ini, d_fim),
