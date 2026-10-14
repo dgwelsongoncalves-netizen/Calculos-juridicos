@@ -3,8 +3,14 @@ from pathlib import Path
 import nash
 import os
 
-def criar_planilha_teste(caminho_saida, regra_dano, is_fazenda=False, is_acordo=False, valor_custas_1=1000.00):
-    # 1. Parâmetros Gerais (Atualizado com novos campos de viabilidade)
+def criar_planilha_teste(caminho_saida, regra_dano, is_fazenda=False, is_acordo=False, valor_custas_1=1000.00, is_parcial=False):
+    # 1. Parâmetros Gerais
+    pagamento_status = 'NÃO'
+    valor_parcial = ''
+    if is_parcial:
+        pagamento_status = 'PARCIAL'
+        valor_parcial = '2500.00'
+        
     parametros = {
         'Processo': [f"TESTE-AUDITORIA-{regra_dano}"],
         'Atuação': ['RÉU'],
@@ -12,8 +18,9 @@ def criar_planilha_teste(caminho_saida, regra_dano, is_fazenda=False, is_acordo=
         'Termo Inicial Juros': ['CITAÇÃO'],
         'Data da Citação': ['15/01/2021'],
         'Justiça Gratuita': ['NÃO'],
-        'Juros sobre Custas': ['Sim (Após Trânsito)'], # Garantindo compatibilidade com v4.0
-        'Pagamento Voluntário 15d': ['NÃO'],
+        'Juros sobre Custas': ['Sim (Após Trânsito)'],
+        'Pagamento Voluntário 15d': [pagamento_status],
+        'Valor Pagamento Parcial (R$)': [valor_parcial],
         'Fazenda Pública': ['SIM' if is_fazenda else 'NÃO'],
         'Honorários Sucumbência (%)': ['10'],
         'Base Honorários': ['CONDENAÇÃO'],
@@ -22,7 +29,7 @@ def criar_planilha_teste(caminho_saida, regra_dano, is_fazenda=False, is_acordo=
     }
     df_param = pd.DataFrame(parametros).T
 
-    # 2. Danos (R$ 10.000,00 / Pedido: R$ 15.000,00)
+    # 2. Danos
     danos = {
         'ID / Folha': ['Doc 1'],
         'Descrição': [f'Indenização Principal ({regra_dano})'],
@@ -35,7 +42,7 @@ def criar_planilha_teste(caminho_saida, regra_dano, is_fazenda=False, is_acordo=
     }
     df_danos = pd.DataFrame(danos)
 
-    # 3. Custas (O valor da Guia 1 é injetável para testar a viabilidade)
+    # 3. Custas
     custas = {
         'ID / Folha': ['Guia 1', 'Guia 2'],
         'Descrição': ['Custas Iniciais', 'Diligência Oficial'],
@@ -44,7 +51,7 @@ def criar_planilha_teste(caminho_saida, regra_dano, is_fazenda=False, is_acordo=
     }
     df_custas = pd.DataFrame(custas)
 
-    # 4. Deduções / Conta Gráfica
+    # 4. Deduções
     deducoes = {
         'ID / Folha': ['Depósito Judicial 1'],
         'Data bloqueio/deposito': ['20/05/2023'],
@@ -80,33 +87,34 @@ def rodar_auditoria():
     pasta_auditoria = Path("Relatorios_Auditoria")
     pasta_auditoria.mkdir(exist_ok=True)
     
-    # Tupla: (Nome, Regra, Is_Fazenda, Is_Acordo, Valor_Custas_Iniciais)
+    # Tupla: (Nome, Regra, Is_Fazenda, Is_Acordo, Valor_Custas_Iniciais, Is_Parcial)
     testes = [
-        ("1_Teste_Regra_R1", "R1", False, False, 1000.0),
-        ("2_Teste_Regra_R2", "R2", False, False, 1000.0),
-        ("3_Teste_Regra_R3", "R3", False, False, 1000.0),
-        ("4_Teste_Regra_R4", "R4", False, False, 1000.0),
-        ("5_Teste_Regra_R5", "R5", False, False, 1000.0),
-        ("6_Teste_Regra_R6", "R6", False, False, 1000.0),
-        ("7_Teste_Regra_R7", "R7", False, False, 1000.0),
-        ("8_Teste_Fazenda_Publica", "R6", True, False, 1000.0), 
-        ("9_Teste_Quebra_de_Acordo", "R6", False, True, 1000.0),
-        # Testes de Viabilidade (Pedido é R$ 15.000)
-        ("10_Teste_Atencao_Financeira", "R6", False, False, 8500.0), # Custas Totais = 9.000 (60%)
-        ("11_Teste_Inviabilidade_Economica", "R6", False, False, 11500.0) # Custas Totais = 12.000 (80%)
+        ("1_Teste_Regra_R1", "R1", False, False, 1000.0, False),
+        ("2_Teste_Regra_R2", "R2", False, False, 1000.0, False),
+        ("3_Teste_Regra_R3", "R3", False, False, 1000.0, False),
+        ("4_Teste_Regra_R4", "R4", False, False, 1000.0, False),
+        ("5_Teste_Regra_R5", "R5", False, False, 1000.0, False),
+        ("6_Teste_Regra_R6", "R6", False, False, 1000.0, False),
+        ("7_Teste_Regra_R7", "R7", False, False, 1000.0, False),
+        ("8_Teste_Fazenda_Publica", "R6", True, False, 1000.0, False), 
+        ("9_Teste_Quebra_de_Acordo", "R6", False, True, 1000.0, False),
+        # Testes de Viabilidade
+        ("10_Teste_Atencao_Financeira", "R6", False, False, 8500.0, False), 
+        ("11_Teste_Inviabilidade_Economica", "R6", False, False, 11500.0, False),
+        # Teste Novo: Pagamento Parcial 523
+        ("12_Teste_Pagamento_Parcial_523", "R6", False, False, 1000.0, True)
     ]
     
-    print("Iniciando Auditoria do Motor Matemático (Nash System v4.0)...\n")
+    print("Iniciando Auditoria do Motor Matemático (Nash System v4.1)...\n")
     
-    for nome_arquivo, regra, is_fazenda, is_acordo, val_custas in testes:
+    for nome_arquivo, regra, is_fazenda, is_acordo, val_custas, is_parcial in testes:
         caminho_template = pasta_auditoria / f"template_{nome_arquivo}.xlsx"
         caminho_laudo = pasta_auditoria / f"Laudo_{nome_arquivo}.xlsx"
         
         print(f"-> Gerando cenário: {nome_arquivo.replace('_', ' ')}...")
-        criar_planilha_teste(caminho_template, regra, is_fazenda, is_acordo, val_custas)
+        criar_planilha_teste(caminho_template, regra, is_fazenda, is_acordo, val_custas, is_parcial)
         
         try:
-            # Captura o novo dicionário de viabilidade retornado pelo executar_nash
             status = nash.executar_nash(str(caminho_template), str(caminho_laudo))
             
             if status and status.get("nivel") != "NORMAL":

@@ -66,6 +66,7 @@ class NashDataEntryGUI:
     # ================= ABA 1: PARÂMETROS =================
     def montar_aba_parametros(self):
         self.vars_param = {}
+        self.vars_param = {}
         campos = [
             ("Processo", "Entry", "5101247-58.2022.8.13.0024"),
             ("Atuação", "Combo", ["RÉU", "AUTOR"]),
@@ -75,8 +76,9 @@ class NashDataEntryGUI:
             ("Data da Citação", "Entry", ""),
             ("Data do Evento", "Entry", ""),
             ("Justiça Gratuita", "Combo", ["Não", "Sim"]),
-            ("Juros sobre Custas", "Combo", ["Sim (Após Trânsito)", "Não (Sem Juros)"]), # NOVO PARÂMETRO
-            ("Pagamento Voluntário 15d", "Combo", ["Não se aplica", "Sim", "Não"]),
+            ("Juros sobre Custas", "Combo", ["Sim (Após Trânsito)", "Não (Sem Juros)"]),
+            ("Pagamento Voluntário 15d", "Combo", ["Não se aplica", "Sim", "Não", "Parcial"]),
+            ("Valor Pagamento Parcial (R$)", "Entry", ""),
             ("Fazenda Pública", "Combo", ["Não", "Sim"]),
             ("Honorários Sucumbência (%)", "Entry", "10"),
             ("Honorários Fixos (R$)", "Entry", ""),
@@ -264,17 +266,28 @@ class NashDataEntryGUI:
         self.lbl_detalhes.pack(anchor="w")
 
     def atualizar_dashboard(self):
+        # 0. Função auxiliar interna para higienizar valores monetários
+        def parse_val(val):
+            val = str(val).strip()
+            if not val or val.lower() == 'nan': return 0.0
+            if '.' in val and ',' in val: val = val.replace('.', '')
+            val = val.replace(',', '.')
+            try: return float(val)
+            except: return 0.0
+
         # 1. Coleta dados históricos limpos
         total_pedido = 0.0
         for item in self.tree_danos.get_children():
             valores = self.tree_danos.item(item, 'values')
-            val_pedido = float(valores[6]) if len(valores) > 6 and valores[6] else float(valores[3])
-            total_pedido += val_pedido
+            # Busca Valor Pedido Inicial (índice 6) ou recai sobre Valor Histórico (índice 3)
+            str_pedido = valores[6] if len(valores) > 6 and str(valores[6]).strip() else (valores[3] if len(valores) > 3 else "0")
+            total_pedido += parse_val(str_pedido)
 
         total_custas = 0.0
         for item in self.tree_custas.get_children():
             valores = self.tree_custas.item(item, 'values')
-            total_custas += float(valores[3]) if len(valores) > 3 and valores[3] else 0.0
+            str_custas = valores[3] if len(valores) > 3 and str(valores[3]).strip() else "0"
+            total_custas += parse_val(str_custas)
 
         if total_pedido <= 0:
             self.lbl_status.config(text="Sem dados de pedido inicial para análise.", fg="gray")
@@ -320,7 +333,6 @@ class NashDataEntryGUI:
             texto_detalhes += f"Oponente ({parte_adversa}) NÃO possui Justiça Gratuita.\nHá expectativa legal de recuperar as custas no fim do processo."
 
         self.lbl_detalhes.config(text=texto_detalhes)
-
 
     # ================= LÓGICA DE POPUPS UNIFICADA =================
     def popup_generico(self, tipo_tree, item_selecionado=None):

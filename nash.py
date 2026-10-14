@@ -9,7 +9,7 @@ import platform
 import subprocess
 from pathlib import Path
 
-__version__ = "4.0.1" 
+__version__ = "4.1.0" 
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -271,7 +271,7 @@ def parse_percent(val):
         return num / 100.0 if num > 1 else num
     except: return 1.0
 
-# --- NOVO: MÓDULO ANALÍTICO (VIABILIDADE FINANCEIRA) ---
+# --- MÓDULO ANALÍTICO (VIABILIDADE FINANCEIRA) ---
 def analisar_viabilidade_financeira(df_danos, df_custas):
     if df_danos.empty or df_custas.empty:
         return 0.0, "NORMAL", ""
@@ -334,7 +334,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         multa_perc = parse_percent(get_param('Multa Moratória Contratual (%)', 10, df_orig=df_acordo))
         hon_perc = parse_percent(get_param('Honorários de Retomada/Execução (%)', 20, df_orig=df_acordo))
         
-        houve_inadimplemento = str(get_param('Pagamento Voluntário 15d', '')).strip().upper() in ['NÃO', 'NAO']
+        houve_inadimplemento = str(get_param('Pagamento Voluntário 15d', '')).strip().upper() in ['NÃO', 'NAO', 'PARCIAL']
         jg = str(get_param('Justiça Gratuita', '')).strip().upper() == 'SIM'
         
         try:
@@ -388,9 +388,17 @@ def executar_nash(caminho_entrada, arquivo_saida):
     # JG nativo refere-se à parte adversa (quem pagaria custas/honorários)
     jg_adversa = str(get_param('Justiça Gratuita', '')).strip().upper() == 'SIM'
     
-    houve_inadimplemento = str(get_param('Pagamento Voluntário 15d', '')).strip().upper() in ['NÃO', 'NAO']
+    status_pagamento_15d = str(get_param('Pagamento Voluntário 15d', '')).strip().upper()
+    houve_inadimplemento_total = status_pagamento_15d in ['NÃO', 'NAO']
+    houve_inadimplemento_parcial = status_pagamento_15d == 'PARCIAL'
+    valor_pago_parcial = limpar_moeda(get_param('Valor Pagamento Parcial (R$)', 0.0))
+    
     is_fazenda = str(get_param('Fazenda Pública', 'NÃO')).strip().upper() == 'SIM'
-    if is_fazenda: houve_inadimplemento = False
+    if is_fazenda:
+        houve_inadimplemento_total = False
+        houve_inadimplemento_parcial = False
+        
+    houve_inadimplemento = houve_inadimplemento_total or houve_inadimplemento_parcial
         
     hon_perc = parse_percent(get_param('Honorários Sucumbência (%)', get_param('Honorários Sucumbência', 10.0)))
     hon_fixo = limpar_moeda(get_param('Honorários Fixos (R$)', 0.0))
@@ -577,12 +585,24 @@ def executar_nash(caminho_entrada, arquivo_saida):
         hon_exigivel_princ = 0.0 if jg_adversa else hon_calc_princ
         hon_exigivel_juros = 0.0 if jg_adversa else hon_calc_juros
 
-        base_multa = subtotal_princ + subtotal_juros + hon_exigivel_princ + hon_exigivel_juros
+        base_multa_bruta = subtotal_princ + subtotal_juros + hon_exigivel_princ + hon_exigivel_juros
+        if houve_inadimplemento_parcial:
+            base_multa = max(0.0, base_multa_bruta - valor_pago_parcial)
+        else:
+            base_multa = base_multa_bruta
+
         valor_multa = (base_multa * 0.10) if houve_inadimplemento else 0.0
         hon_523 = (base_multa * 0.10) if (houve_inadimplemento and not jg_adversa) else 0.0
         
         total_final_processo = base_multa + valor_multa + hon_523
-        gerar_laudo_excel(processo, teve_transito, jg_adversa, df_danos, df_custas, (subtotal_princ+subtotal_juros), (hon_exigivel_princ+hon_exigivel_juros), valor_multa, hon_523, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, [], base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
+        gerar_laudo_excel(
+            processo, teve_transito, jg_adversa, df_danos, df_custas,
+            (subtotal_princ + subtotal_juros), (hon_exigivel_princ + hon_exigivel_juros),
+            valor_multa, hon_523, total_final_processo, arquivo_saida,
+            houve_inadimplemento, termo_juros_raw, [], base_hon, prop_hon,
+            prop_custas, hon_perc, hon_fixo,
+            valor_pago_parcial=(valor_pago_parcial if houve_inadimplemento_parcial else 0.0)
+        )
 
     else:
         historico_cg = []; saldo_principal = 0.0; saldo_juros = 0.0
@@ -629,14 +649,23 @@ def executar_nash(caminho_entrada, arquivo_saida):
             historico_cg.append((data_corte, f"(+) Honorários Suc. ({f'{hon_perc*100:.0f}%' if hon_fixo==0 else 'Fixos'}{f' rateados a {prop_hon*100:.0f}%' if prop_hon<1.0 else ''})", hon_suc_princ, hon_suc_jur, 0.0, saldo_principal+saldo_juros))
             
         if houve_inadimplemento:
-            base_multa = saldo_principal + saldo_juros
+            base_multa_bruta = saldo_principal + saldo_juros
+            if houve_inadimplemento_parcial:
+                base_multa = max(0.0, base_multa_bruta - valor_pago_parcial)
+                desc_multa = "(+) Multa Art. 523 CPC (10% - Base Remanescente)"
+                desc_hon_523 = "(+) Honorários Art. 523 CPC (10% - Base Remanescente)"
+            else:
+                base_multa = base_multa_bruta
+                desc_multa = "(+) Multa Art. 523 CPC (10%)"
+                desc_hon_523 = "(+) Honorários Art. 523 CPC (10%)"
+                
             multa_523 = base_multa * 0.10
             saldo_principal += multa_523
-            historico_cg.append((data_corte, "(+) Multa Art. 523 CPC (10%)", multa_523, 0.0, 0.0, saldo_principal+saldo_juros))
+            historico_cg.append((data_corte, desc_multa, multa_523, 0.0, 0.0, saldo_principal+saldo_juros))
             if not jg_adversa:
                 hon_523 = base_multa * 0.10
                 saldo_principal += hon_523
-                historico_cg.append((data_corte, "(+) Honorários Art. 523 CPC (10%)", hon_523, 0.0, 0.0, saldo_principal+saldo_juros))
+                historico_cg.append((data_corte, desc_hon_523, hon_523, 0.0, 0.0, saldo_principal+saldo_juros))
                 
         historico_cg.append((data_corte, "DÍVIDA CONSOLIDADA (Pré-Bloqueio)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
         
@@ -698,14 +727,20 @@ def executar_nash(caminho_entrada, arquivo_saida):
             historico_cg.append((data_calculo, "Atualização Final (Hoje)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
             
         total_final_processo = saldo_principal + saldo_juros
-        gerar_laudo_excel(processo, teve_transito, jg_adversa, df_danos, df_custas, 0, 0, 0, 0, total_final_processo, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico_cg, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo)
+        gerar_laudo_excel(
+            processo, teve_transito, jg_adversa, df_danos, df_custas,
+            0, 0, 0, 0, total_final_processo, arquivo_saida,
+            houve_inadimplemento, termo_juros_raw, historico_cg, base_hon,
+            prop_hon, prop_custas, hon_perc, hon_fixo,
+            valor_pago_parcial=(valor_pago_parcial if houve_inadimplemento_parcial else 0.0)
+        )
 
     if 'AUTOR' not in atuacao and 'Risco Atual' in df_danos.columns and df_danos['Risco Atual'].sum() > 0:
         gerar_relatorio_exito_cliente(processo, df_danos[df_danos['Risco Atual'] > 0], arquivo_saida)
 
     return {"proporcao": proporcao_custas, "nivel": nivel_alerta_custas, "mensagem": msg_alerta_custas}
 
-# --- 6. GERAÇÃO DE RELATÓRIO ESTRATÉGICO INTERNO (NOVO) ---
+# --- 6. GERAÇÃO DE RELATÓRIO ESTRATÉGICO INTERNO ---
 def gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao, nivel, df_danos, df_custas, arquivo_saida_base):
     arquivo_saida_base = Path(arquivo_saida_base)
     wb = Workbook()
@@ -733,7 +768,6 @@ def gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao, nivel,
     ws['A4'] = "Este é um documento de controle estratégico. NÃO JUNTAR AOS AUTOS."
     ws['A4'].font = Font(name="Arial", size=10, bold=True, color="FF0000")
 
-    # Cálculos Históricos vs Atualizados
     total_pedido_hist = df_danos['Valor Pedido Inicial'].sum()
     if total_pedido_hist <= 0: total_pedido_hist = df_danos['Valor Histórico'].sum()
     total_custas_hist = df_custas['Valor Histórico'].sum()
@@ -785,7 +819,6 @@ def gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao, nivel,
     
     wb.save(str(path_final))
     logging.info(f"Relatório estratégico gerado: {path_final.name}")
-
 
 # --- 7. GERAÇÃO DE ARQUIVOS PRINCIPAIS (ACORDO, LAUDO PADRÃO E ÊXITO) ---
 def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_pago, saldo_base, f_cm, f_jur, val_princ, val_juros, subtotal, multa_perc, val_multa, hon_perc, val_hon, multa_523, hon_523, total_geral, df_pagas, arquivo_saida):
@@ -885,7 +918,7 @@ def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_p
     wb.save(str(path_final))
     converter_para_pdf(path_final)
 
-def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo):
+def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo, valor_pago_parcial=0.0):
     wb = Workbook()
     ws = wb.active
     ws.title = "Laudo de Liquidação"
@@ -1122,6 +1155,9 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
 
         add_total("SUBTOTAL (Principal + Custas Atualizados):", subtotal, True)
         add_total(f"Honorários Acumulados ({f'{hon_perc*100:.0f}%' if hon_fixo==0 else 'Fixos'}){f' (rateado a {prop_hon*100:.0f}%)' if prop_hon<1.0 else ''}:", hon)
+        if valor_pago_parcial > 0:
+            add_total("(-) Pagamento Voluntário Parcial (Art. 523, §2º CPC):", valor_pago_parcial)
+            add_total("(=) SALDO REMANESCENTE (Base Art. 523 CPC):", max(0.0, (subtotal + hon) - valor_pago_parcial), True)
         if houve_inadimplemento:
             add_total("Multa Art. 523 CPC (10%):", multa); add_total("Honorários Art. 523 CPC (10%):", hon_523)
         add_total("TOTAL GERAL DEVIDO:", total, True, True)

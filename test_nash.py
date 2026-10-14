@@ -175,3 +175,60 @@ def test_integracao_custas_leinova_com_conta_grafica(tmp_path):
     assert "Lei 14.905" in regra_aplicada, f"Erro: A regra das custas não foi fixada na Lei Nova. Registou: {regra_aplicada}"
     assert valor_exigivel > 0.0, "Erro Crítico: O valor exigível das custas ficou a zeros na Conta Gráfica!"
     assert valor_exigivel > 464.64, "Erro: O valor exigível não sofreu atualização monetária."
+
+def test_pagamento_parcial_art_523(tmp_path):
+    df_param = pd.DataFrame([
+        ['Processo', 'Teste Pagamento Parcial 523'],
+        ['Pagamento Voluntário 15d', 'PARCIAL'],
+        ['Valor Pagamento Parcial (R$)', '2000.00'],
+        ['Honorários Sucumbência (%)', '10'],
+        ['Base Honorários', 'CONDENAÇÃO'],
+        ['Proporção Honorários (%)', '100'],
+        ['Proporção Custas (%)', '100']
+    ]).set_index(0)
+
+    df_danos = pd.DataFrame({
+        'ID / Folha': ['DANO-1'], 'Descrição': ['Principal'], 
+        'Data Desembolso': ['01/01/2026'], 'Valor Histórico': [10000.0], 
+        'Regra': ['R2']
+    })
+
+    df_custas = pd.DataFrame(columns=['ID / Folha', 'Descrição', 'Data Desembolso', 'Valor Histórico'])
+    df_deducoes = pd.DataFrame(columns=['Data bloqueio/deposito', 'Valor'])
+
+    input_file = tmp_path / "entrada_parcial.xlsx"
+    output_file = tmp_path / "Laudo_parcial.xlsx"
+
+    with pd.ExcelWriter(input_file) as writer:
+        df_param.to_excel(writer, sheet_name='Parametros', header=False)
+        df_danos.to_excel(writer, sheet_name='Danos', index=False)
+        df_custas.to_excel(writer, sheet_name='Custas', index=False)
+        df_deducoes.to_excel(writer, sheet_name='Deducoes', index=False)
+
+    nash.executar_nash(input_file, output_file)
+    assert output_file.exists(), "O laudo não foi gerado."
+
+    wb = openpyxl.load_workbook(output_file)
+    ws = wb['Laudo de Liquidação']
+
+    subtotal = 0.0
+    honorarios = 0.0
+    achou_multa = False
+    valor_multa = 0.0
+
+    # Extrai dinamicamente os valores exatos do laudo gerado
+    for row in ws.iter_rows(values_only=True):
+        col0 = str(row[0]) if row[0] else ""
+        if "SUBTOTAL (Principal + Custas Atualizados):" in col0:
+            subtotal = float(row[7])
+        elif "Honorários Acumulados" in col0:
+            honorarios = float(row[7])
+        elif "Multa Art. 523" in col0:
+            achou_multa = True
+            valor_multa = float(row[7])
+
+    assert achou_multa, "Multa do 523 não foi lançada no laudo."
+    
+    # Valida se a multa corresponde exatamente a 10% da base bruta menos os R$ 2.000,00
+    multa_esperada = ((subtotal + honorarios) - 2000.0) * 0.10
+    assert valor_multa == pytest.approx(multa_esperada, rel=1e-4), "O pagamento parcial de R$ 2.000,00 não foi deduzido corretamente da base da multa."
