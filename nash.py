@@ -385,7 +385,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
     data_transito_c, teve_transito = get_param('Data do Trânsito', is_date=True), pd.notna(get_param('Data do Trânsito', is_date=True))
     data_sentenca = get_param('Data da Sentença', is_date=True)
     
-    # JG nativo refere-se à parte adversa (quem pagaria custas/honorários)
     jg_adversa = str(get_param('Justiça Gratuita', '')).strip().upper() == 'SIM'
     
     status_pagamento_15d = str(get_param('Pagamento Voluntário 15d', '')).strip().upper()
@@ -490,21 +489,37 @@ def executar_nash(caminho_entrada, arquivo_saida):
         df_danos.at[idx, 'Fator Juros'] = f_jur
         
         is_transicao = regra in ['R3', 'R4', 'R5', 'R7']
+        
+        if regra in ['R4', 'R5', 'R6']: nome_r2 = "IPCA + Taxa Legal (Lei 14.905/24)"
+        elif regra in ['R2', 'R3']: nome_r2 = "Taxa Selic (Correção e Juros)"
+        elif regra == 'R7': nome_r2 = "IPCA + Taxa Legal Retroativa"
+        else: nome_r2 = "Novo Regime"
+        
         if is_transicao and data_cm < data_transicao:
             f_cm_1, f_jur_1 = get_fator_calculo(regra, data_cm, data_juros, data_transicao)
             if regra in ['R3', 'R4']: nome_r1 = "Tabela TJMG + Juros 1% a.m."
             elif regra == 'R5': nome_r1 = "Taxa Selic (Correção e Juros)"
             elif regra == 'R7': nome_r1 = "Tabela TJMG (Sem Juros)"
+            else: nome_r1 = "Regime Antigo"
             
             subtotal_fase1 = valor * f_cm_1 * (1 + f_jur_1)
             df_danos.at[idx, 'Fase1_CM'] = f_cm_1
             df_danos.at[idx, 'Fase1_Jur'] = f_jur_1
             df_danos.at[idx, 'Fase1_Subtotal'] = subtotal_fase1
-            df_danos.at[idx, 'Fase2_IPCA'] = f_cm / f_cm_1 if f_cm_1 > 0 else 1.0
-            df_danos.at[idx, 'Fase2_TL'] = f_jur - f_jur_1
+            
+            if regra == 'R3':
+                # Na R3, a Fase 2 aplica exclusivamente a Taxa Selic sobre o subtotal consolidado na Fase 1
+                fator_selic_fase2 = f_cm / f_cm_1 if f_cm_1 > 0 else 1.0
+                df_danos.at[idx, 'Fase2_IPCA'] = 1.0
+                df_danos.at[idx, 'Fase2_TL'] = fator_selic_fase2 - 1.0
+            else:
+                df_danos.at[idx, 'Fase2_IPCA'] = f_cm / f_cm_1 if f_cm_1 > 0 else 1.0
+                df_danos.at[idx, 'Fase2_TL'] = f_jur - f_jur_1
+                
             df_danos.at[idx, 'Acrecismo'] = val_final_item - subtotal_fase1
             df_danos.at[idx, 'Tem_Transicao'] = True
             df_danos.at[idx, 'Regra_Fase1'] = nome_r1
+            df_danos.at[idx, 'Regra_Fase2'] = nome_r2
         else:
             df_danos.at[idx, 'Fase1_Subtotal'] = valor if data_cm >= data_transicao else val_final_item
             df_danos.at[idx, 'Fase1_CM'] = 1.0 if data_cm >= data_transicao else f_cm
@@ -512,7 +527,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
             df_danos.at[idx, 'Fase2_IPCA'] = f_cm if data_cm >= data_transicao else 1.0
             df_danos.at[idx, 'Fase2_TL'] = f_jur if data_cm >= data_transicao else 0.0
             df_danos.at[idx, 'Acrecismo'] = val_final_item - valor if data_cm >= data_transicao else 0.0
-            df_danos.at[idx, 'Tem_Transicao'] = False
+            df_danos.at[idx, 'Tem_Transicao'] = is_transicao and (data_cm < data_transicao)
+            df_danos.at[idx, 'Regra_Fase1'] = "Desembolso após 08/2024 (Sem Fase 1)" if data_cm >= data_transicao else nome_r2
+            df_danos.at[idx, 'Regra_Fase2'] = nome_r2 if data_cm >= data_transicao else "-"
         
         v_pedido = float(row['Valor Pedido Inicial'])
         if 'AUTOR' not in atuacao and v_pedido > 0 and pd.notna(row['Data do Pedido']):
@@ -523,7 +540,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
             df_danos.at[idx, 'Risco Atual'] = risco_atualizado_total
             df_danos.at[idx, 'Proveito'] = max(0, risco_atualizado_total - val_final_item)
 
-    # Parâmetro de Juros sobre Custas com fallback para 'Sim' (retrocompatibilidade)
     juros_custas_param = str(get_param('Juros sobre Custas', 'Sim')).strip().upper()
     aplica_juros_custas = 'NÃO' not in juros_custas_param and 'NAO' not in juros_custas_param
 
@@ -990,10 +1006,19 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
         linha += 2
 
-        ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "1.1. DANOS MATERIAIS - FASE 2: APÓS 30/08/2024 (Lei 14.905/24 - IPCA + Taxa Legal)"
+        regras_f2_unicas = [str(x) for x in df_danos['Regra_Fase2'].dropna().unique() if str(x) != '-']
+        eh_so_selic_f2 = len(regras_f2_unicas) == 1 and "Selic" in regras_f2_unicas[0]
+        
+        if eh_so_selic_f2:
+            titulo_f2 = "1.1. DANOS MATERIAIS - FASE 2: APÓS 30/08/2024 (Atualização e Juros pela Taxa Selic)"
+            cabs2 = ['ID / Folha', 'Descrição', 'Base de Cálculo\n(Subtotal Fase 1)', 'Fator CM\n(A partir 09/24)', 'Taxa Selic (%)\n(A partir 09/24)', 'Acréscimo R$\n(Fase 2)', 'Índice Aplicado\n(Fase 2)', 'Valor Atualizado\nFinal']
+        else:
+            titulo_f2 = "1.1. DANOS MATERIAIS - FASE 2: APÓS 30/08/2024 (Lei 14.905/24 / Regime Pós-08/24)"
+            cabs2 = ['ID / Folha', 'Descrição', 'Base de Cálculo\n(Subtotal Fase 1)', 'Fator IPCA / CM\n(A partir 09/24)', 'Taxa Legal / Selic\n(A partir 09/24)', 'Acréscimo R$\n(Fase 2)', 'Índice Aplicado\n(Fase 2)', 'Valor Atualizado\nFinal']
+
+        ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = titulo_f2
         ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
 
-        cabs2 = ['ID / Folha', 'Descrição', 'Base de Cálculo\n(Subtotal Fase 1)', 'Fator IPCA\n(A partir 09/24)', 'Taxa Legal (%)\n(A partir 09/24)', 'Acréscimo R$\n(Fase 2)', 'Índice Aplicado\n(Fase 2)', 'Valor Atualizado\nFinal']
         for i, t in enumerate(cabs2, 1): 
             ws.cell(row=linha, column=i, value=t).font = f_negrito
             ws.cell(row=linha, column=i).border = borda
@@ -1014,7 +1039,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
             acrescimo = r.get('Acrecismo', 0.0)
             ws.cell(row=linha, column=6, value=acrescimo).number_format = moeda; ws.cell(row=linha, column=6).border = borda
             
-            regra_nova = "IPCA + Taxa Legal" if r.get('Tem_Transicao', False) else "-"
+            regra_nova = r.get('Regra_Fase2', '-')
             ws.cell(row=linha, column=7, value=regra_nova).border = borda
             
             val_final = r['Valor Atualizado']

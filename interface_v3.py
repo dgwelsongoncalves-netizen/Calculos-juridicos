@@ -12,7 +12,7 @@ import nash
 class NashDataEntryGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Nash System - Preenchimento (v4.0 - Beta Acordos)")
+        self.root.title("Nash System - Preenchimento e Liquidação Judicial")
         self.root.geometry("900x650")
 
         main_frame = ttk.Frame(root, padding=10)
