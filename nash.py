@@ -9,7 +9,7 @@ import platform
 import subprocess
 from pathlib import Path
 
-__version__ = "4.1.0" 
+__version__ = "4.1.1" 
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -255,10 +255,11 @@ def converter_para_pdf(caminho_xlsx):
         return True
     except: return False
 
-# --- FUNÇÕES AUXILIARES ---
+# --- FUNÇÕES AUXILIARES BLINDADAS ---
 def limpar_moeda(val):
-    if isinstance(val, (int, float)): return float(val)
-    val = str(val).strip()
+    if isinstance(val, (int, float)):
+        return 0.0 if pd.isna(val) else float(val)
+    val = str(val).replace('R$', '').replace('$', '').replace(' ', '').strip()
     if not val or val.lower() == 'nan': return 0.0
     if '.' in val and ',' in val: val = val.replace('.', '')
     val = val.replace(',', '.')
@@ -476,8 +477,8 @@ def executar_nash(caminho_entrada, arquivo_saida):
         elif regra == 'R7': df_danos.at[idx, 'Desc_Regra'] = "TJMG(CM); Taxa Legal Retroativa (Juros)"
         else: df_danos.at[idx, 'Desc_Regra'] = "Selic"
         
-        data_juros_base = data_propositura if 'PROPOSITURA' in termo_juros_raw else data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_cm
-        data_juros = pd.to_datetime(row['Data Juros'], dayfirst=True, errors='coerce') if 'Data Juros' in row and pd.notna(row['Data Juros']) else data_juros_base
+        data_juros_base = data_propositura if 'PROPOSITURA' in termo_juros_raw else data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_transito_c if 'TRÂNSITO' in termo_juros_raw or 'TRANSITO' in termo_juros_raw else data_cm
+        data_juros = pd.to_datetime(row['Data Juros'], dayfirst=True, errors='coerce') if 'Data Juros' in row and pd.notna(row['Data Juros']) and str(row['Data Juros']).strip() != '' else data_juros_base
             
         f_cm, f_jur = get_fator_calculo(regra, data_cm, data_juros, data_calculo)
 
@@ -508,7 +509,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
             df_danos.at[idx, 'Fase1_Subtotal'] = subtotal_fase1
             
             if regra == 'R3':
-                # Na R3, a Fase 2 aplica exclusivamente a Taxa Selic sobre o subtotal consolidado na Fase 1
                 fator_selic_fase2 = f_cm / f_cm_1 if f_cm_1 > 0 else 1.0
                 df_danos.at[idx, 'Fase2_IPCA'] = 1.0
                 df_danos.at[idx, 'Fase2_TL'] = fator_selic_fase2 - 1.0
@@ -567,8 +567,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
 
     try:
         df_deducoes = pd.read_excel(xls, sheet_name='Deducoes').dropna(subset=['Data bloqueio/deposito', 'Valor'], how='any')
+        df_deducoes['Valor'] = df_deducoes['Valor'].apply(limpar_moeda)
         df_deducoes['Data bloqueio/deposito'] = pd.to_datetime(df_deducoes['Data bloqueio/deposito'], format='mixed', dayfirst=True, errors='coerce')
-        df_deducoes = df_deducoes.sort_values('Data bloqueio/deposito')
+        df_deducoes = df_deducoes.dropna(subset=['Data bloqueio/deposito']).sort_values('Data bloqueio/deposito')
         tem_deducao = not df_deducoes.empty
     except: tem_deducao = False; df_deducoes = pd.DataFrame()
 
@@ -633,8 +634,8 @@ def executar_nash(caminho_entrada, arquivo_saida):
             valor = float(row['Valor Histórico'])
             regra_txt = str(row.get('Regra', '')).strip().upper()
             regra = regra_txt if regra_txt in ['R1','R2','R3','R4','R5','R6','R7'] else ('R2' if 'SELIC' in regra_txt else regra_predominante)
-            data_juros_base = data_propositura if 'PROPOSITURA' in termo_juros_raw else data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_cm
-            data_juros = pd.to_datetime(row['Data Juros'], dayfirst=True, errors='coerce') if 'Data Juros' in row and pd.notna(row['Data Juros']) else data_juros_base
+            data_juros_base = data_propositura if 'PROPOSITURA' in termo_juros_raw else data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_transito_c if 'TRÂNSITO' in termo_juros_raw or 'TRANSITO' in termo_juros_raw else data_cm
+            data_juros = pd.to_datetime(row['Data Juros'], dayfirst=True, errors='coerce') if 'Data Juros' in row and pd.notna(row['Data Juros']) and str(row['Data Juros']).strip() != '' else data_juros_base
             f_cm, f_jur = get_fator_calculo(regra, data_cm, data_juros, data_corte)
             val_princ = valor * f_cm
             saldo_principal += val_princ; saldo_juros += val_princ * f_jur
@@ -664,24 +665,15 @@ def executar_nash(caminho_entrada, arquivo_saida):
             saldo_principal += hon_suc_princ; saldo_juros += hon_suc_jur
             historico_cg.append((data_corte, f"(+) Honorários Suc. ({f'{hon_perc*100:.0f}%' if hon_fixo==0 else 'Fixos'}{f' rateados a {prop_hon*100:.0f}%' if prop_hon<1.0 else ''})", hon_suc_princ, hon_suc_jur, 0.0, saldo_principal+saldo_juros))
             
-        if houve_inadimplemento:
-            base_multa_bruta = saldo_principal + saldo_juros
-            if houve_inadimplemento_parcial:
-                base_multa = max(0.0, base_multa_bruta - valor_pago_parcial)
-                desc_multa = "(+) Multa Art. 523 CPC (10% - Base Remanescente)"
-                desc_hon_523 = "(+) Honorários Art. 523 CPC (10% - Base Remanescente)"
-            else:
-                base_multa = base_multa_bruta
-                desc_multa = "(+) Multa Art. 523 CPC (10%)"
-                desc_hon_523 = "(+) Honorários Art. 523 CPC (10%)"
-                
+        if houve_inadimplemento_total:
+            base_multa = saldo_principal + saldo_juros
             multa_523 = base_multa * 0.10
             saldo_principal += multa_523
-            historico_cg.append((data_corte, desc_multa, multa_523, 0.0, 0.0, saldo_principal+saldo_juros))
+            historico_cg.append((data_corte, "(+) Multa Art. 523 CPC (10%)", multa_523, 0.0, 0.0, saldo_principal+saldo_juros))
             if not jg_adversa:
                 hon_523 = base_multa * 0.10
                 saldo_principal += hon_523
-                historico_cg.append((data_corte, desc_hon_523, hon_523, 0.0, 0.0, saldo_principal+saldo_juros))
+                historico_cg.append((data_corte, "(+) Honorários Art. 523 CPC (10%)", hon_523, 0.0, 0.0, saldo_principal+saldo_juros))
                 
         historico_cg.append((data_corte, "DÍVIDA CONSOLIDADA (Pré-Bloqueio)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
         
@@ -703,7 +695,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
             
         for _, row in df_deducoes.iterrows():
             data_ded = pd.to_datetime(row['Data bloqueio/deposito'])
-            valor_ded = float(row['Valor'])
+            valor_ded = limpar_moeda(row['Valor'])
             id_deposito = str(row.get('ID / Folha', row.get('ID', ''))).strip()
             str_id = f" (ID: {id_deposito})" if id_deposito and id_deposito.lower() != 'nan' else ""
             
@@ -741,6 +733,16 @@ def executar_nash(caminho_entrada, arquivo_saida):
         if ultima_data < data_calculo:
             avancar_tempo_cg(data_calculo)
             historico_cg.append((data_calculo, "Atualização Final (Hoje)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
+
+        if houve_inadimplemento_parcial and (saldo_principal + saldo_juros) > 0:
+            base_remanescente = max(0.0, (saldo_principal + saldo_juros) - valor_pago_parcial)
+            multa_523 = base_remanescente * 0.10
+            saldo_principal += multa_523
+            historico_cg.append((data_calculo, "(+) Multa Art. 523, §2º CPC (10% s/ Saldo Remanescente)", multa_523, 0.0, 0.0, saldo_principal+saldo_juros))
+            if not jg_adversa:
+                hon_523 = base_remanescente * 0.10
+                saldo_principal += hon_523
+                historico_cg.append((data_calculo, "(+) Honorários Art. 523, §2º CPC (10% s/ Saldo Remanescente)", hon_523, 0.0, 0.0, saldo_principal+saldo_juros))
             
         total_final_processo = saldo_principal + saldo_juros
         gerar_laudo_excel(
