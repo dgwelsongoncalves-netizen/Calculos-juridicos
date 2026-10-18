@@ -157,7 +157,7 @@ class ChaosMonkeyNash:
         wb = openpyxl.load_workbook(caminho_laudo, data_only=True)
         ws = wb["Laudo de Liquidação"]
 
-        val_final_encontrado = 0.0
+        val_final_encontrado = None
         for r_idx, row in enumerate(ws.iter_rows(values_only=True), 1):
             texto_linha = " ".join([str(c) for c in row if c is not None])
             if "nan" in texto_linha.lower() and "id:" not in texto_linha.lower():
@@ -169,6 +169,8 @@ class ChaosMonkeyNash:
                 if val_final_encontrado < -0.01:
                     raise AssertionError(f"Saldo final negativo detectado ({val_final_encontrado}) no cenário {idx_cenario}!")
 
+        if val_final_encontrado is None:
+            raise AssertionError(f"Linha do total final não encontrada no Laudo do cenário {idx_cenario}!")
         return val_final_encontrado
 
     def executar_bateria_caos(self):

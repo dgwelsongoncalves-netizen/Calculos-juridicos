@@ -7,9 +7,10 @@ import logging
 import traceback
 import platform
 import subprocess
+import re
 from pathlib import Path
 
-__version__ = "4.1.1" 
+__version__ = "4.1.2" # Validação estrita de entrada, saldo por regra após bloqueio, nome do relatório interno
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -266,6 +267,41 @@ def limpar_moeda(val):
     try: return float(val)
     except: return 0.0
 
+class EntradaInvalidaError(ValueError):
+    """Dado de entrada ilegível. Sobe até o usuário: NUNCA pode ser engolido nem virar zero em silêncio."""
+    pass
+
+def _vazio(x):
+    try:
+        if pd.isna(x): return True
+    except (TypeError, ValueError): pass
+    return isinstance(x, str) and x.strip() == ''
+
+def converter_datas_estrito(serie, aba, coluna):
+    """Células vazias viram NaT. Texto ilegível, data impossível (31/02) ou número solto (44966) levantam erro."""
+    saida = []
+    for idx, x in serie.items():
+        onde = f"Aba '{aba}', linha {int(idx) + 2}, coluna '{coluna}'"
+        if _vazio(x): saida.append(pd.NaT); continue
+        if isinstance(x, (int, float)) and not isinstance(x, bool):
+            raise EntradaInvalidaError(f"{onde}: há um número ({x}) no lugar de uma data. Formate a célula como Data no Excel.")
+        dt = pd.to_datetime(pd.Series([x]), format='mixed', dayfirst=True, errors='coerce').iloc[0]
+        if pd.isna(dt) or dt.year < 1990 or dt.year > 2100:
+            raise EntradaInvalidaError(f"{onde}: não foi possível ler '{x}' como data.")
+        saida.append(dt)
+    return pd.to_datetime(pd.Series(saida, index=serie.index, dtype=object))
+
+def limpar_moeda_estrito(val, onde):
+    """Vazio vira 0,0; texto que não é valor (ex.: 'abc') levanta erro em vez de virar zero."""
+    if _vazio(val): return 0.0
+    if isinstance(val, (int, float)) and not isinstance(val, bool): return float(val)
+    t = str(val).replace('R$', '').replace('$', '').replace(' ', '').strip()
+    if t.lower() == 'nan': return 0.0
+    if '.' in t and ',' in t: t = t.replace('.', '')
+    t = t.replace(',', '.')
+    try: return float(t)
+    except ValueError: raise EntradaInvalidaError(f"{onde}: não foi possível ler '{val}' como valor em reais.")
+
 def parse_percent(val):
     try:
         num = float(str(val).replace('%', '').replace(',', '.').strip())
@@ -312,11 +348,13 @@ def executar_nash(caminho_entrada, arquivo_saida):
         except KeyError: return default
         if pd.isna(val) or str(val).strip() == '': return default
         if is_date:
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                raise EntradaInvalidaError(f"Data inválida no campo '{nome}': há um número ({val}) no lugar de uma data. Formate a célula como Data.")
             try:
                 dt = pd.to_datetime(val, dayfirst=True)
                 if dt.year < 1900 or dt.year > 2100: raise ValueError
                 return dt
-            except Exception: raise Exception(f"Data inválida no campo '{nome}'.")
+            except Exception: raise EntradaInvalidaError(f"Data inválida no campo '{nome}'.")
         return val
 
     data_calculo = pd.Timestamp.today()
@@ -391,7 +429,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
     status_pagamento_15d = str(get_param('Pagamento Voluntário 15d', '')).strip().upper()
     houve_inadimplemento_total = status_pagamento_15d in ['NÃO', 'NAO']
     houve_inadimplemento_parcial = status_pagamento_15d == 'PARCIAL'
-    valor_pago_parcial = limpar_moeda(get_param('Valor Pagamento Parcial (R$)', 0.0))
+    valor_pago_parcial = limpar_moeda_estrito(get_param('Valor Pagamento Parcial (R$)', 0.0), "Parâmetro 'Valor Pagamento Parcial (R$)'")
     
     is_fazenda = str(get_param('Fazenda Pública', 'NÃO')).strip().upper() == 'SIM'
     if is_fazenda:
@@ -401,8 +439,8 @@ def executar_nash(caminho_entrada, arquivo_saida):
     houve_inadimplemento = houve_inadimplemento_total or houve_inadimplemento_parcial
         
     hon_perc = parse_percent(get_param('Honorários Sucumbência (%)', get_param('Honorários Sucumbência', 10.0)))
-    hon_fixo = limpar_moeda(get_param('Honorários Fixos (R$)', 0.0))
-    valor_causa = limpar_moeda(get_param('Valor Causa Original', 0.0))
+    hon_fixo = limpar_moeda_estrito(get_param('Honorários Fixos (R$)', 0.0), "Parâmetro 'Honorários Fixos (R$)'")
+    valor_causa = limpar_moeda_estrito(get_param('Valor Causa Original', 0.0), "Parâmetro 'Valor Causa Original'")
     
     termo_juros_raw = str(get_param('Termo Inicial Juros', 'DESEMBOLSO')).strip().upper()
     data_citacao, data_evento = get_param('Data da Citação', is_date=True), get_param('Data do Evento', is_date=True)
@@ -412,28 +450,33 @@ def executar_nash(caminho_entrada, arquivo_saida):
     prop_hon, prop_custas = parse_percent(get_param('Proporção Honorários (%)', 100)), parse_percent(get_param('Proporção Custas (%)', 100))
 
     df_danos = pd.read_excel(xls, sheet_name='Danos').dropna(subset=['Descrição'], how='any')
-    df_danos['Valor Histórico'] = df_danos['Valor Histórico'].apply(limpar_moeda)
+    df_danos['Valor Histórico'] = pd.Series([limpar_moeda_estrito(x, f"Aba 'Danos', linha {int(i)+2}, 'Valor Histórico'") for i, x in df_danos['Valor Histórico'].items()], index=df_danos.index, dtype=float)
     if 'Valor Pedido Inicial' not in df_danos.columns: df_danos['Valor Pedido Inicial'] = 0.0
-    df_danos['Valor Pedido Inicial'] = df_danos['Valor Pedido Inicial'].apply(limpar_moeda)
+    df_danos['Valor Pedido Inicial'] = pd.Series([limpar_moeda_estrito(x, f"Aba 'Danos', linha {int(i)+2}, 'Valor Pedido Inicial'") for i, x in df_danos['Valor Pedido Inicial'].items()], index=df_danos.index, dtype=float)
     df_danos['Valor Atualizado'] = 0.0
     df_danos['Fator CM'] = 1.0
     df_danos['Fator Juros'] = 0.0
     
     if 'Data Desembolso' not in df_danos.columns: df_danos['Data Desembolso'] = pd.NaT
     if 'Data do Pedido' not in df_danos.columns: df_danos['Data do Pedido'] = pd.NaT
-    try:
-        df_danos['Data Desembolso'] = pd.to_datetime(df_danos['Data Desembolso'], format='mixed', dayfirst=True, errors='coerce')
-        df_danos['Data do Pedido'] = pd.to_datetime(df_danos['Data do Pedido'], format='mixed', dayfirst=True, errors='coerce')
-    except: pass
+    if 'Data Juros' not in df_danos.columns: df_danos['Data Juros'] = pd.NaT
+    for col_data in ['Data Desembolso', 'Data do Pedido', 'Data Juros']:
+        df_danos[col_data] = converter_datas_estrito(df_danos[col_data], 'Danos', col_data)
     df_danos.loc[(df_danos['Valor Histórico'] == 0) & (df_danos['Data Desembolso'].isna()), 'Data Desembolso'] = df_danos['Data do Pedido']
+    sem_data = df_danos[(df_danos['Valor Histórico'] > 0) & (df_danos['Data Desembolso'].isna())]
+    if not sem_data.empty:
+        raise EntradaInvalidaError(f"Aba 'Danos', linha {int(sem_data.index[0]) + 2} ('{sem_data.iloc[0]['Descrição']}'): há Valor Histórico mas a Data Desembolso está em branco.")
     
-    df_custas = pd.read_excel(xls, sheet_name='Custas').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='any')
-    df_custas['Valor Histórico'] = df_custas['Valor Histórico'].apply(limpar_moeda)
+    df_custas = pd.read_excel(xls, sheet_name='Custas').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='all')
+    df_custas['Valor Histórico'] = pd.Series([limpar_moeda_estrito(x, f"Aba 'Custas', linha {int(i)+2}, 'Valor Histórico'") for i, x in df_custas['Valor Histórico'].items()], index=df_custas.index, dtype=float)
+    df_custas['Data Desembolso'] = converter_datas_estrito(df_custas['Data Desembolso'], 'Custas', 'Data Desembolso')
+    custa_sem_data = df_custas[(df_custas['Valor Histórico'] != 0) & (df_custas['Data Desembolso'].isna())]
+    if not custa_sem_data.empty:
+        raise EntradaInvalidaError(f"Aba 'Custas', linha {int(custa_sem_data.index[0]) + 2}: há valor mas a Data Desembolso está em branco.")
+    df_custas = df_custas[df_custas['Data Desembolso'].notna()].copy()
     df_custas['Exigível'] = 0.0
     df_custas['Fator CM'] = 1.0
     df_custas['Fator Juros'] = 0.0
-    try: df_custas['Data Desembolso'] = pd.to_datetime(df_custas['Data Desembolso'], format='mixed', dayfirst=True, errors='coerce')
-    except: pass
 
     # --- ANÁLISE DE VIABILIDADE ESTRATÉGICA ---
     proporcao_custas, nivel_alerta_custas, msg_alerta_custas = analisar_viabilidade_financeira(df_danos, df_custas)
@@ -444,10 +487,17 @@ def executar_nash(caminho_entrada, arquivo_saida):
     df_bcb = carregar_taxas_bcb(datas.min() if not datas.empty else pd.NaT)
     data_transicao = pd.to_datetime('2024-08-30')
     
-    regra_predominante = str(df_danos.iloc[0].get('Regra', 'R6')).strip().upper() if not df_danos.empty else 'R6'
-    if regra_predominante not in ['R1','R2','R3','R4','R5','R6','R7']:
-        if 'SELIC' in regra_predominante: regra_predominante = 'R2'
-        else: regra_predominante = 'R6'
+    REGRAS_VALIDAS = ['R1','R2','R3','R4','R5','R6','R7']
+    def _regra_valida(txt):
+        t = str(txt).strip().upper()
+        return t if t in REGRAS_VALIDAS else ('R2' if 'SELIC' in t else None)
+    # Regra predominante = a de maior valor histórico (independe da ordem das linhas). Só serve para honorários/multa e linhas sem regra.
+    _pesos = {}
+    for _, _r in df_danos.iterrows():
+        _g = _regra_valida(_r.get('Regra', ''))
+        if _g: _pesos[_g] = _pesos.get(_g, 0.0) + abs(float(_r['Valor Histórico']))
+    regra_predominante = sorted(_pesos.items(), key=lambda kv: (-kv[1], kv[0]))[0][0] if _pesos else 'R6'
+    def resolver_regra(txt): return _regra_valida(txt) or regra_predominante
 
     def get_fator_calculo(regra_alvo, d_cm, d_jur, d_calc):
         if is_fazenda: return calc_fazenda_publica(df_bcb, d_cm, d_jur, d_calc)
@@ -465,7 +515,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         if pd.isna(data_cm): continue
         valor = float(row['Valor Histórico'])
         regra_txt = str(row.get('Regra', '')).strip().upper()
-        regra = regra_txt if regra_txt in ['R1','R2','R3','R4','R5','R6','R7'] else ('R2' if 'SELIC' in regra_txt else regra_predominante)
+        regra = resolver_regra(regra_txt)
         
         if is_fazenda: df_danos.at[idx, 'Desc_Regra'] = "Faz. Pub. (EC 113)"
         elif regra == 'R1': df_danos.at[idx, 'Desc_Regra'] = "TJMG + Juros 1%"
@@ -478,7 +528,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         else: df_danos.at[idx, 'Desc_Regra'] = "Selic"
         
         data_juros_base = data_propositura if 'PROPOSITURA' in termo_juros_raw else data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_transito_c if 'TRÂNSITO' in termo_juros_raw or 'TRANSITO' in termo_juros_raw else data_cm
-        data_juros = pd.to_datetime(row['Data Juros'], dayfirst=True, errors='coerce') if 'Data Juros' in row and pd.notna(row['Data Juros']) and str(row['Data Juros']).strip() != '' else data_juros_base
+        data_juros = row['Data Juros'] if pd.notna(row['Data Juros']) else data_juros_base
             
         f_cm, f_jur = get_fator_calculo(regra, data_cm, data_juros, data_calculo)
 
@@ -565,13 +615,19 @@ def executar_nash(caminho_entrada, arquivo_saida):
         df_custas.at[idx, 'Fator Juros'] = f_jur
         df_custas.at[idx, 'Desc_Regra'] = f"{nome_base_regra} (Trânsito)" if teve_transito else f"{nome_base_regra} (S/ Juros)"
 
-    try:
-        df_deducoes = pd.read_excel(xls, sheet_name='Deducoes').dropna(subset=['Data bloqueio/deposito', 'Valor'], how='any')
-        df_deducoes['Valor'] = df_deducoes['Valor'].apply(limpar_moeda)
-        df_deducoes['Data bloqueio/deposito'] = pd.to_datetime(df_deducoes['Data bloqueio/deposito'], format='mixed', dayfirst=True, errors='coerce')
-        df_deducoes = df_deducoes.dropna(subset=['Data bloqueio/deposito']).sort_values('Data bloqueio/deposito')
+    df_deducoes = pd.DataFrame(); tem_deducao = False
+    if 'Deducoes' in xls.sheet_names:
+        df_ded = pd.read_excel(xls, sheet_name='Deducoes')
+        if not {'Data bloqueio/deposito', 'Valor'} <= set(df_ded.columns):
+            raise EntradaInvalidaError("A aba 'Deducoes' existe, mas não tem as colunas 'Data bloqueio/deposito' e 'Valor'.")
+        df_ded = df_ded.dropna(subset=['Data bloqueio/deposito', 'Valor'], how='all')
+        df_ded['Valor'] = pd.Series([limpar_moeda_estrito(x, f"Aba 'Deducoes', linha {int(i)+2}, 'Valor'") for i, x in df_ded['Valor'].items()], index=df_ded.index, dtype=float)
+        df_ded['Data bloqueio/deposito'] = converter_datas_estrito(df_ded['Data bloqueio/deposito'], 'Deducoes', 'Data bloqueio/deposito')
+        ruim = df_ded[df_ded['Data bloqueio/deposito'].isna() | (df_ded['Valor'] <= 0)]
+        if not ruim.empty:
+            raise EntradaInvalidaError(f"Aba 'Deducoes', linha {int(ruim.index[0]) + 2}: bloqueio/depósito com data em branco ou valor em branco/zero.")
+        df_deducoes = df_ded.sort_values('Data bloqueio/deposito', kind='stable')
         tem_deducao = not df_deducoes.empty
-    except: tem_deducao = False; df_deducoes = pd.DataFrame()
 
     total_final_processo = 0.0
     
@@ -622,34 +678,39 @@ def executar_nash(caminho_entrada, arquivo_saida):
         )
 
     else:
-        historico_cg = []; saldo_principal = 0.0; saldo_juros = 0.0
+        historico_cg = []
         data_corte = df_deducoes.iloc[0]['Data bloqueio/deposito']
-        
-        def get_fator_acumulado(d_alvo):
-            return get_fator_calculo(regra_predominante, data_corte, data_corte, d_alvo)
-        
+
+        # Cada regra vira um "grupo" de saldo, corrigido pelo seu próprio motor depois do 1º bloqueio.
+        # (Antes, TODO o saldo seguia a regra da 1ª linha de Danos: o total dependia da ordem das linhas.)
+        def grupo_de(regra): return 'FAZ' if is_fazenda else regra
+        saldos = {}                                   # grupo -> [principal, juros]
+        def sal(g): return saldos.setdefault(g, [0.0, 0.0])
+        def P_tot(): return sum(s[0] for s in saldos.values())
+        def J_tot(): return sum(s[1] for s in saldos.values())
+        grupo_pred = grupo_de(regra_predominante)     # honorários e multa entram no grupo da regra de maior valor
+
         for idx, row in df_danos.iterrows():
             data_cm = row['Data Desembolso']
             if pd.isna(data_cm) or data_cm > data_corte: continue
             valor = float(row['Valor Histórico'])
-            regra_txt = str(row.get('Regra', '')).strip().upper()
-            regra = regra_txt if regra_txt in ['R1','R2','R3','R4','R5','R6','R7'] else ('R2' if 'SELIC' in regra_txt else regra_predominante)
+            regra = resolver_regra(row.get('Regra', ''))
             data_juros_base = data_propositura if 'PROPOSITURA' in termo_juros_raw else data_citacao if 'CITA' in termo_juros_raw else data_evento if 'EVENTO' in termo_juros_raw else data_transito_c if 'TRÂNSITO' in termo_juros_raw or 'TRANSITO' in termo_juros_raw else data_cm
-            data_juros = pd.to_datetime(row['Data Juros'], dayfirst=True, errors='coerce') if 'Data Juros' in row and pd.notna(row['Data Juros']) and str(row['Data Juros']).strip() != '' else data_juros_base
+            data_juros = row['Data Juros'] if pd.notna(row['Data Juros']) else data_juros_base
             f_cm, f_jur = get_fator_calculo(regra, data_cm, data_juros, data_corte)
             val_princ = valor * f_cm
-            saldo_principal += val_princ; saldo_juros += val_princ * f_jur
-            
+            s = sal(grupo_de(regra)); s[0] += val_princ; s[1] += val_princ * f_jur
+
         for idx, row in df_custas.iterrows():
             data_cm_c = row['Data Desembolso']
             if pd.isna(data_cm_c) or data_cm_c > data_corte or jg_adversa: continue
             data_jur_c = data_transito_c if teve_transito else pd.NaT
             f_cm, f_jur = calc_fazenda_publica(df_bcb, data_cm_c, data_jur_c, data_corte) if is_fazenda else calc_leinova_pura(df_bcb, data_cm_c, data_jur_c, data_corte)
             val_princ = (row['Valor Histórico'] * f_cm) * prop_custas
-            saldo_principal += val_princ; saldo_juros += val_princ * f_jur
-            
-        historico_cg.append((data_corte, "Atualização até 1º Bloqueio", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
-        
+            s = sal(grupo_de('R6')); s[0] += val_princ; s[1] += val_princ * f_jur
+
+        historico_cg.append((data_corte, "Atualização até 1º Bloqueio", P_tot(), J_tot(), 0.0, P_tot()+J_tot()))
+
         hon_suc_princ, hon_suc_jur = 0.0, 0.0
         if base_hon == 'VALOR DA CAUSA' and valor_causa > 0 and pd.notna(data_propositura) and not jg_adversa:
             f_cm_hon, _ = get_fator_calculo(regra_predominante, data_propositura, pd.NaT, data_corte)
@@ -659,92 +720,95 @@ def executar_nash(caminho_entrada, arquivo_saida):
             hon_suc_princ = (hon_fixo * f_cm) * prop_hon
             hon_suc_jur = hon_suc_princ * f_jur
         elif hon_fixo > 0 and not jg_adversa: hon_suc_princ = hon_fixo * prop_hon
-        elif not jg_adversa: hon_suc_princ = ((saldo_principal + saldo_juros) * hon_perc) * prop_hon
-            
+        elif not jg_adversa: hon_suc_princ = ((P_tot() + J_tot()) * hon_perc) * prop_hon
+
         if hon_suc_princ > 0 or hon_suc_jur > 0:
-            saldo_principal += hon_suc_princ; saldo_juros += hon_suc_jur
-            historico_cg.append((data_corte, f"(+) Honorários Suc. ({f'{hon_perc*100:.0f}%' if hon_fixo==0 else 'Fixos'}{f' rateados a {prop_hon*100:.0f}%' if prop_hon<1.0 else ''})", hon_suc_princ, hon_suc_jur, 0.0, saldo_principal+saldo_juros))
-            
+            s = sal(grupo_pred); s[0] += hon_suc_princ; s[1] += hon_suc_jur
+            historico_cg.append((data_corte, f"(+) Honorários Suc. ({f'{hon_perc*100:.0f}%' if hon_fixo==0 else 'Fixos'}{f' rateados a {prop_hon*100:.0f}%' if prop_hon<1.0 else ''})", hon_suc_princ, hon_suc_jur, 0.0, P_tot()+J_tot()))
+
         if houve_inadimplemento_total:
-            base_multa = saldo_principal + saldo_juros
+            base_multa = P_tot() + J_tot()
             multa_523 = base_multa * 0.10
-            saldo_principal += multa_523
-            historico_cg.append((data_corte, "(+) Multa Art. 523 CPC (10%)", multa_523, 0.0, 0.0, saldo_principal+saldo_juros))
+            sal(grupo_pred)[0] += multa_523
+            historico_cg.append((data_corte, "(+) Multa Art. 523 CPC (10%)", multa_523, 0.0, 0.0, P_tot()+J_tot()))
             if not jg_adversa:
                 hon_523 = base_multa * 0.10
-                saldo_principal += hon_523
-                historico_cg.append((data_corte, "(+) Honorários Art. 523 CPC (10%)", hon_523, 0.0, 0.0, saldo_principal+saldo_juros))
-                
-        historico_cg.append((data_corte, "DÍVIDA CONSOLIDADA (Pré-Bloqueio)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
-        
+                sal(grupo_pred)[0] += hon_523
+                historico_cg.append((data_corte, "(+) Honorários Art. 523 CPC (10%)", hon_523, 0.0, 0.0, P_tot()+J_tot()))
+
+        historico_cg.append((data_corte, "DÍVIDA CONSOLIDADA (Pré-Bloqueio)", P_tot(), J_tot(), 0.0, P_tot()+J_tot()))
+
         ultima_data = data_corte
-        
+
         def avancar_tempo_cg(d_alvo):
-            nonlocal saldo_principal, saldo_juros, ultima_data
-            cm_T1, jur_T1 = get_fator_acumulado(ultima_data)
-            cm_T2, jur_T2 = get_fator_acumulado(d_alvo)
-            if regra_predominante in ['R2', 'SELIC']:
-                f_cm_delta = (1 + jur_T2) / (1 + jur_T1) if (1 + jur_T1) > 0 else 1.0
-                f_jur_delta = 0.0
-            else:
-                f_cm_delta = cm_T2 / cm_T1 if cm_T1 > 0 else 1.0
-                f_jur_delta = jur_T2 - jur_T1
-            saldo_principal = saldo_principal * f_cm_delta
-            saldo_juros = saldo_juros * f_cm_delta + saldo_principal * f_jur_delta
+            nonlocal ultima_data
+            for g, s in saldos.items():
+                cm_T1, jur_T1 = get_fator_calculo(g, data_corte, data_corte, ultima_data)
+                cm_T2, jur_T2 = get_fator_calculo(g, data_corte, data_corte, d_alvo)
+                if g == 'R2' and not is_fazenda:     # Selic: o fator único vem no campo "juros"
+                    f_cm_delta = (1 + jur_T2) / (1 + jur_T1) if (1 + jur_T1) > 0 else 1.0
+                    f_jur_delta = 0.0
+                else:
+                    f_cm_delta = cm_T2 / cm_T1 if cm_T1 > 0 else 1.0
+                    f_jur_delta = jur_T2 - jur_T1
+                s[0] = s[0] * f_cm_delta
+                s[1] = s[1] * f_cm_delta + s[0] * f_jur_delta
             ultima_data = d_alvo
-            
+
+        def incluir_despesa(nd):
+            d_dano = nd['Data Desembolso']
+            avancar_tempo_cg(d_dano)
+            sal(grupo_de(resolver_regra(nd.get('Regra', ''))))[0] += float(nd['Valor Histórico'])
+            historico_cg.append((d_dano, f"(+) Nova Inclusão: {nd['Descrição']}", P_tot(), J_tot(), 0.0, P_tot()+J_tot()))
+
         for _, row in df_deducoes.iterrows():
-            data_ded = pd.to_datetime(row['Data bloqueio/deposito'])
-            valor_ded = limpar_moeda(row['Valor'])
+            data_ded = row['Data bloqueio/deposito']
+            valor_ded = float(row['Valor'])
             id_deposito = str(row.get('ID / Folha', row.get('ID', ''))).strip()
             str_id = f" (ID: {id_deposito})" if id_deposito and id_deposito.lower() != 'nan' else ""
-            
-            despesas_tardias = df_danos[(df_danos['Data Desembolso'] > ultima_data) & (df_danos['Data Desembolso'] <= data_ded)]
-            for _, nd in despesas_tardias.iterrows():
-                d_dano = nd['Data Desembolso']
-                avancar_tempo_cg(d_dano)
-                saldo_principal += float(nd['Valor Histórico'])
-                historico_cg.append((d_dano, f"(+) Nova Inclusão: {nd['Descrição']}", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
+
+            despesas_tardias = df_danos[(df_danos['Data Desembolso'] > ultima_data) & (df_danos['Data Desembolso'] <= data_ded) & (df_danos['Valor Histórico'] > 0)].sort_values('Data Desembolso', kind='stable')
+            for _, nd in despesas_tardias.iterrows(): incluir_despesa(nd)
 
             if data_ded > ultima_data:
                 avancar_tempo_cg(data_ded)
-                historico_cg.append((data_ded, "Atualização do Saldo", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
-            
-            abate_juros = min(valor_ded, saldo_juros)
-            saldo_juros -= abate_juros
+                historico_cg.append((data_ded, "Atualização do Saldo", P_tot(), J_tot(), 0.0, P_tot()+J_tot()))
+
+            # Art. 354 CC: o pagamento abate primeiro os juros e depois o capital (rateado entre os grupos)
+            P0, J0 = P_tot(), J_tot()
+            abate_juros = min(valor_ded, J0)
+            if J0 > 0:
+                for s in saldos.values(): s[1] -= abate_juros * (s[1] / J0)
             abate_princ = valor_ded - abate_juros
-            
-            if abate_princ > saldo_principal:
-                excesso = abate_princ - saldo_principal
-                saldo_principal = 0.0
-                historico_cg.append((data_ded, f"(-) Bloqueio/Depósito{str_id}", 0.0, saldo_juros, valor_ded, 0.0))
+
+            if abate_princ > P0:
+                excesso = abate_princ - P0
+                for s in saldos.values(): s[0] = 0.0
+                historico_cg.append((data_ded, f"(-) Bloqueio/Depósito{str_id}", 0.0, J_tot(), valor_ded, 0.0))
                 historico_cg.append((data_ded, "(!) EXCESSO / RESTITUIR", 0.0, 0.0, excesso, 0.0))
             else:
-                saldo_principal -= abate_princ
-                historico_cg.append((data_ded, f"(-) Bloqueio/Depósito{str_id}", saldo_principal, saldo_juros, valor_ded, saldo_principal+saldo_juros))
-        
-        despesas_finais = df_danos[df_danos['Data Desembolso'] > ultima_data]
-        for _, nd in despesas_finais.iterrows():
-            d_dano = nd['Data Desembolso']
-            avancar_tempo_cg(d_dano)
-            saldo_principal += float(nd['Valor Histórico'])
-            historico_cg.append((d_dano, f"(+) Nova Inclusão: {nd['Descrição']}", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
+                if P0 > 0:
+                    for s in saldos.values(): s[0] -= abate_princ * (s[0] / P0)
+                historico_cg.append((data_ded, f"(-) Bloqueio/Depósito{str_id}", P_tot(), J_tot(), valor_ded, P_tot()+J_tot()))
+
+        despesas_finais = df_danos[(df_danos['Data Desembolso'] > ultima_data) & (df_danos['Valor Histórico'] > 0)].sort_values('Data Desembolso', kind='stable')
+        for _, nd in despesas_finais.iterrows(): incluir_despesa(nd)
 
         if ultima_data < data_calculo:
             avancar_tempo_cg(data_calculo)
-            historico_cg.append((data_calculo, "Atualização Final (Hoje)", saldo_principal, saldo_juros, 0.0, saldo_principal+saldo_juros))
+            historico_cg.append((data_calculo, "Atualização Final (Hoje)", P_tot(), J_tot(), 0.0, P_tot()+J_tot()))
 
-        if houve_inadimplemento_parcial and (saldo_principal + saldo_juros) > 0:
-            base_remanescente = max(0.0, (saldo_principal + saldo_juros) - valor_pago_parcial)
+        if houve_inadimplemento_parcial and (P_tot() + J_tot()) > 0:
+            base_remanescente = max(0.0, (P_tot() + J_tot()) - valor_pago_parcial)
             multa_523 = base_remanescente * 0.10
-            saldo_principal += multa_523
-            historico_cg.append((data_calculo, "(+) Multa Art. 523, §2º CPC (10% s/ Saldo Remanescente)", multa_523, 0.0, 0.0, saldo_principal+saldo_juros))
+            sal(grupo_pred)[0] += multa_523
+            historico_cg.append((data_calculo, "(+) Multa Art. 523, §2º CPC (10% s/ Saldo Remanescente)", multa_523, 0.0, 0.0, P_tot()+J_tot()))
             if not jg_adversa:
                 hon_523 = base_remanescente * 0.10
-                saldo_principal += hon_523
-                historico_cg.append((data_calculo, "(+) Honorários Art. 523, §2º CPC (10% s/ Saldo Remanescente)", hon_523, 0.0, 0.0, saldo_principal+saldo_juros))
-            
-        total_final_processo = saldo_principal + saldo_juros
+                sal(grupo_pred)[0] += hon_523
+                historico_cg.append((data_calculo, "(+) Honorários Art. 523, §2º CPC (10% s/ Saldo Remanescente)", hon_523, 0.0, 0.0, P_tot()+J_tot()))
+
+        total_final_processo = P_tot() + J_tot()
         gerar_laudo_excel(
             processo, teve_transito, jg_adversa, df_danos, df_custas,
             0, 0, 0, 0, total_final_processo, arquivo_saida,
@@ -832,8 +896,12 @@ def gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao, nivel,
     ws.row_dimensions[linha].height = 45
     
     prefixo = "Relatorio_Inviabilidade_" if nivel == "CRITICO" else "Relatorio_Atencao_"
-    nome_base = arquivo_saida_base.name.replace('laudo ', prefixo)
+    nome_base = re.sub(r'^laudo[ _]', prefixo, arquivo_saida_base.name, flags=re.IGNORECASE)
+    if nome_base == arquivo_saida_base.name: nome_base = prefixo + arquivo_saida_base.name   # nunca reutiliza o nome do laudo
     path_final = arquivo_saida_base.parent / nome_base
+    contador = 1
+    while path_final.exists():
+        path_final = path_final.with_name(f"{Path(nome_base).stem} ({contador}){Path(nome_base).suffix}"); contador += 1
     
     wb.save(str(path_final))
     logging.info(f"Relatório estratégico gerado: {path_final.name}")
