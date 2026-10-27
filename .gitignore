@@ -29,3 +29,10 @@ dist/
 build/
 Instalador_Final/
 *.exe
+
+# Ignora a pasta de relatórios de auditoria
+relatorios_auditoria/
+
+# Ignora quaisquer laudos gerados na raiz ou subpastas
+laudo*
+Relatorio_Exito*

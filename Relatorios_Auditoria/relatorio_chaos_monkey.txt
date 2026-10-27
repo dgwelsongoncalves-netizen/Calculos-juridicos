@@ -1,0 +1,36 @@
+=====================================================================
+🐒 RELATÓRIO DE ENGENHARIA DE CAOS - NASH SYSTEM v4.1.2
+Data/Hora: 24/10/2026 20:19:20 | Seed: 806742 | Ataques: 25
+=====================================================================
+
+  [SOBREVIVEU] Ataque #01 (Regra=R6 | Danos=5 | Custas=1 | Deduções=3 | 523=Não se aplica | Faz=Não | JG=Não) -> Total: R$ 76,102.55
+  [SOBREVIVEU] Ataque #02 (Regra=R2 | Danos=5 | Custas=2 | Deduções=0 | 523=Não | Faz=Sim | JG=Não) -> Total: R$ 66,784.08
+  [SOBREVIVEU] Ataque #03 (Regra=R2 | Danos=2 | Custas=3 | Deduções=0 | 523=nao | Faz=Sim | JG=Sim) -> Total: R$ 28,672.56
+  [SOBREVIVEU] Ataque #04 (Regra=R6 | Danos=5 | Custas=3 | Deduções=0 | 523=Não se aplica | Faz=Sim | JG=NÃO) -> Total: R$ 55,026.13
+  [SOBREVIVEU] Ataque #05 (Regra=R4 | Danos=2 | Custas=2 | Deduções=1 | 523=Não | Faz=Não | JG=NÃO) -> Total: R$ 23,805.99
+  [SOBREVIVEU] Ataque #06 (Regra=R1 | Danos=2 | Custas=3 | Deduções=1 | 523=Não | Faz=Sim | JG=Sim) -> Total: R$ 14,467.54
+  [SOBREVIVEU] Ataque #07 (Regra=R7 | Danos=3 | Custas=2 | Deduções=2 | 523=nao | Faz=Sim | JG=sim) -> Total: R$ 19,872.12
+  [SOBREVIVEU] Ataque #08 (Regra=R5 | Danos=3 | Custas=3 | Deduções=0 | 523=Parcial | Faz=Sim | JG=NÃO) -> Total: R$ 51,722.61
+  [SOBREVIVEU] Ataque #09 (Regra=R4 | Danos=4 | Custas=2 | Deduções=0 | 523=Não se aplica | Faz=Sim | JG=Sim) -> Total: R$ 51,706.92
+  [SOBREVIVEU] Ataque #10 (Regra=R2 | Danos=3 | Custas=0 | Deduções=1 | 523=Sim | Faz=Sim | JG=Não) -> Total: R$ 49,174.76
+  [SOBREVIVEU] Ataque #11 (Regra=R7 | Danos=2 | Custas=3 | Deduções=1 | 523=nao | Faz=Sim | JG=sim) -> Total: R$ 35,712.12
+  [SOBREVIVEU] Ataque #12 (Regra=R7 | Danos=3 | Custas=2 | Deduções=3 | 523=Sim | Faz=Sim | JG=NÃO) -> Total: R$ 35,429.09
+  [SOBREVIVEU] Ataque #13 (Regra=R4 | Danos=5 | Custas=2 | Deduções=1 | 523=PARCIAL | Faz=Sim | JG=NÃO) -> Total: R$ 59,690.09
+  [SOBREVIVEU] Ataque #14 (Regra=R2 | Danos=1 | Custas=1 | Deduções=0 | 523=Não | Faz=Sim | JG=NÃO) -> Total: R$ 17,492.68
+  [SOBREVIVEU] Ataque #15 (Regra=R6 | Danos=2 | Custas=2 | Deduções=2 | 523=Sim | Faz=Não | JG=NÃO) -> Total: R$ 27,468.65
+  [SOBREVIVEU] Ataque #16 (Regra=R1 | Danos=2 | Custas=0 | Deduções=1 | 523=PARCIAL | Faz=Sim | JG=sim) -> Total: R$ 34,744.83
+  [SOBREVIVEU] Ataque #17 (Regra=R6 | Danos=5 | Custas=2 | Deduções=2 | 523=Não | Faz=Não | JG=Sim) -> Total: R$ 50,079.33
+  [SOBREVIVEU] Ataque #18 (Regra=R2 | Danos=4 | Custas=3 | Deduções=0 | 523=Sim | Faz=Sim | JG=NÃO) -> Total: R$ 33,592.91
+  [SOBREVIVEU] Ataque #19 (Regra=R5 | Danos=5 | Custas=0 | Deduções=3 | 523=Sim | Faz=Não | JG=sim) -> Total: R$ 15,364.66
+  [SOBREVIVEU] Ataque #20 (Regra=R5 | Danos=2 | Custas=1 | Deduções=2 | 523=Não | Faz=Não | JG=Sim) -> Total: R$ 3,722.05
+  [SOBREVIVEU] Ataque #21 (Regra=R1 | Danos=5 | Custas=0 | Deduções=0 | 523=Parcial | Faz=Não | JG=sim) -> Total: R$ 65,285.15
+  [SOBREVIVEU] Ataque #22 (Regra=R5 | Danos=2 | Custas=2 | Deduções=0 | 523=nao | Faz=Sim | JG=sim) -> Total: R$ 37,499.64
+  [SOBREVIVEU] Ataque #23 (Regra=R7 | Danos=5 | Custas=0 | Deduções=2 | 523=Não se aplica | Faz=Não | JG=NÃO) -> Total: R$ 55,765.33
+  [SOBREVIVEU] Ataque #24 (Regra=R2 | Danos=5 | Custas=2 | Deduções=3 | 523=Parcial | Faz=Não | JG=NÃO) -> Total: R$ 61,523.79
+  [SOBREVIVEU] Ataque #25 (Regra=R1 | Danos=2 | Custas=3 | Deduções=0 | 523=PARCIAL | Faz=Não | JG=Não) -> Total: R$ 7,510.97
+
+=====================================================================
+✅ RESULTADO: O Nash System sobreviveu a 100% dos ataques do Chaos Monkey!
+📄 Relatório detalhado salvo em: Relatorios_Auditoria/relatorio_chaos_monkey.txt
+📊 Planilha de amostra do último ataque salva em: Relatorios_Auditoria/amostra_chaos_laudo.xlsx
+=====================================================================

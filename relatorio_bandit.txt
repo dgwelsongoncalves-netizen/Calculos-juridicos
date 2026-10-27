@@ -1,0 +1,752 @@
+Run started:2026-10-25 21:07:42.513618+00:00
+
+Test results:
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:24:50
+23	        self.iteracoes = iteracoes
+24	        self.seed = seed if seed is not None else random.randint(1, 999999)
+25	        self.salvar_todas_planilhas = salvar_todas_planilhas
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:45:15
+44	        ]
+45	        return random.choice(formatos)(valor_float)
+46	
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:55:15
+54	        ]
+55	        return random.choice(opcoes)
+56	
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:59:14
+58	        """Gera datas válidas em formatos variados de string ou datetime."""
+59	        ano = random.randint(ano_min, ano_max)
+60	        mes = random.randint(1, 12)
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:60:14
+59	        ano = random.randint(ano_min, ano_max)
+60	        mes = random.randint(1, 12)
+61	        dia = random.randint(1, 28)
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:61:14
+60	        mes = random.randint(1, 12)
+61	        dia = random.randint(1, 28)
+62	        formatos = [
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:67:15
+66	        ]
+67	        return random.choice(formatos)
+68	
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:71:24
+70	        """Cria um template Excel com combinações extremas de parâmetros e deduções."""
+71	        pagamento_15d = random.choice(["Não se aplica", "Sim", "Não", "Parcial", " nao ", "PARCIAL"])
+72	        tem_valor_parcial_param = random.choice([True, False])
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:72:34
+71	        pagamento_15d = random.choice(["Não se aplica", "Sim", "Não", "Parcial", " nao ", "PARCIAL"])
+72	        tem_valor_parcial_param = random.choice([True, False])
+73	        val_parcial = self._caos_moeda(random.uniform(100.0, 5000.0)) if tem_valor_parcial_param else ""
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:73:39
+72	        tem_valor_parcial_param = random.choice([True, False])
+73	        val_parcial = self._caos_moeda(random.uniform(100.0, 5000.0)) if tem_valor_parcial_param else ""
+74	        atuacao = random.choice(["RÉU", "AUTOR", " réu ", "autor"])
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:74:18
+73	        val_parcial = self._caos_moeda(random.uniform(100.0, 5000.0)) if tem_valor_parcial_param else ""
+74	        atuacao = random.choice(["RÉU", "AUTOR", " réu ", "autor"])
+75	        fazenda = random.choice(["Não", "Sim"])
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:75:18
+74	        atuacao = random.choice(["RÉU", "AUTOR", " réu ", "autor"])
+75	        fazenda = random.choice(["Não", "Sim"])
+76	        jg = random.choice(["Não", "Sim", "NÃO", "sim"])
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:76:13
+75	        fazenda = random.choice(["Não", "Sim"])
+76	        jg = random.choice(["Não", "Sim", "NÃO", "sim"])
+77	
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:81:65
+80	            "Atuação": [atuacao],
+81	            "Data do Trânsito": [self._caos_data(2024, 2026) if random.choice([True, False]) else ""],
+82	            "Data da Sentença": [self._caos_data(2023, 2025)],
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:83:36
+82	            "Data da Sentença": [self._caos_data(2023, 2025)],
+83	            "Termo Inicial Juros": [random.choice(["Desembolso", "Citação", "Evento", "Propositura", "Trânsito em julgado"])],
+84	            "Data da Citação": [self._caos_data(2021, 2023)],
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:87:35
+86	            "Justiça Gratuita": [jg],
+87	            "Juros sobre Custas": [random.choice(["Sim (Após Trânsito)", "Não (Sem Juros)"])],
+88	            "Pagamento Voluntário 15d": [pagamento_15d],
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:91:67
+90	            "Fazenda Pública": [fazenda],
+91	            "Honorários Sucumbência (%)": [self._caos_percentual(random.choice([10, 15, 20]))],
+92	            "Honorários Fixos (R$)": [self._caos_moeda(1500.0) if random.random() < 0.2 else ""],
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:92:67
+91	            "Honorários Sucumbência (%)": [self._caos_percentual(random.choice([10, 15, 20]))],
+92	            "Honorários Fixos (R$)": [self._caos_moeda(1500.0) if random.random() < 0.2 else ""],
+93	            "Base Honorários": [random.choice(["CONDENAÇÃO", "VALOR DA CAUSA", "PROVEITO ECONÔMICO"])],
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:93:33
+92	            "Honorários Fixos (R$)": [self._caos_moeda(1500.0) if random.random() < 0.2 else ""],
+93	            "Base Honorários": [random.choice(["CONDENAÇÃO", "VALOR DA CAUSA", "PROVEITO ECONÔMICO"])],
+94	            "Valor Causa Original": [self._caos_moeda(random.uniform(5000.0, 50000.0))],
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:94:54
+93	            "Base Honorários": [random.choice(["CONDENAÇÃO", "VALOR DA CAUSA", "PROVEITO ECONÔMICO"])],
+94	            "Valor Causa Original": [self._caos_moeda(random.uniform(5000.0, 50000.0))],
+95	            "Data Propositura": [self._caos_data(2021, 2022)],
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:96:66
+95	            "Data Propositura": [self._caos_data(2021, 2022)],
+96	            "Proporção Honorários (%)": [self._caos_percentual(random.choice([50, 75, 80, 100]))],
+97	            "Proporção Custas (%)": [self._caos_percentual(random.choice([50, 75, 80, 100]))],
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:97:61
+96	            "Proporção Honorários (%)": [self._caos_percentual(random.choice([50, 75, 80, 100]))],
+97	            "Proporção Custas (%)": [self._caos_percentual(random.choice([50, 75, 80, 100]))],
+98	        }
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:101:20
+100	
+101	        qtd_danos = random.randint(1, 5)
+102	        regra_escolhida = random.choice(self.regras)
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:102:26
+101	        qtd_danos = random.randint(1, 5)
+102	        regra_escolhida = random.choice(self.regras)
+103	        linhas_danos = []
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:105:27
+104	        for i in range(qtd_danos):
+105	            v_hist = round(random.uniform(50.0, 20000.0), 2)
+106	            linhas_danos.append({
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:111:44
+110	                "Valor Histórico": self._caos_moeda(v_hist),
+111	                "Regra": regra_escolhida if random.random() > 0.2 else random.choice(self.regras),
+112	                "Data Juros": self._caos_data(2021, 2025) if random.random() < 0.3 else "",
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:111:71
+110	                "Valor Histórico": self._caos_moeda(v_hist),
+111	                "Regra": regra_escolhida if random.random() > 0.2 else random.choice(self.regras),
+112	                "Data Juros": self._caos_data(2021, 2025) if random.random() < 0.3 else "",
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:112:61
+111	                "Regra": regra_escolhida if random.random() > 0.2 else random.choice(self.regras),
+112	                "Data Juros": self._caos_data(2021, 2025) if random.random() < 0.3 else "",
+113	                "Valor Pedido Inicial": self._caos_moeda(v_hist * 1.5),
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:118:21
+117	
+118	        qtd_custas = random.randint(0, 3)
+119	        linhas_custas = []
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:125:59
+124	                "Data Desembolso": self._caos_data(2021, 2025),
+125	                "Valor Histórico": self._caos_moeda(round(random.uniform(35.0, 1500.0), 2)),
+126	            })
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:131:23
+130	
+131	        qtd_deducoes = random.choice([0, 0, 1, 2, 3])
+132	        linhas_ded = []
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./chaos_nash.py:137:48
+136	                "Data bloqueio/deposito": self._caos_data(2023, 2025),
+137	                "Valor": self._caos_moeda(round(random.uniform(200.0, 8000.0), 2)),
+138	            })
+
+--------------------------------------------------
+>> Issue: [B404:blacklist] Consider possible security implications associated with the subprocess module.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_imports.html#b404-import-subprocess
+   Location: ./interface_v3.py:6:0
+5	from datetime import datetime
+6	import subprocess
+7	import sys
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: ./leitor_processos.py:106:16
+105	                    client.files.delete(name=uploaded_file.name)
+106	                except Exception:
+107	                    pass
+108	            if tentativa < MAX_TENTATIVAS:
+
+--------------------------------------------------
+>> Issue: [B404:blacklist] Consider possible security implications associated with the subprocess module.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_imports.html#b404-import-subprocess
+   Location: ./mutation_nash.py:9:0
+8	"""
+9	import json, os, shutil, subprocess, sys, tempfile
+10	from concurrent.futures import ThreadPoolExecutor
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: ./mutation_nash.py:72:12
+71	    try:
+72	        r = subprocess.run([sys.executable, "oraculo_nash.py"], cwd=d, capture_output=True, text=True, timeout=240)
+73	        j = json.loads(r.stdout.strip().splitlines()[-1])
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: ./mutation_nash.py:80:13
+79	        (d/"run_monkey.py").write_text("import io,contextlib,json,chaos_nash as c\nm=c.ChaosMonkeyNash(iteracoes=25,seed=101)\nwith contextlib.redirect_stdout(io.StringIO()): m.executar_bateria_caos()\nprint(len([f for f in m.relatorio_falhas if 'does not exist' not in f[1]]))\n")
+80	        r2 = subprocess.run([sys.executable, "run_monkey.py"], cwd=d, capture_output=True, text=True, timeout=240)
+81	        detalhe += f" | monkey: {'PEGOU' if r2.stdout.strip().endswith(tuple('123456789')) else 'passou'}"
+
+--------------------------------------------------
+>> Issue: [B404:blacklist] Consider possible security implications associated with the subprocess module.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_imports.html#b404-import-subprocess
+   Location: ./nash.py:9:0
+8	import platform
+9	import subprocess
+10	import re
+
+--------------------------------------------------
+>> Issue: [B603:subprocess_without_shell_equals_true] subprocess call - check for execution of untrusted input.
+   Severity: Low   Confidence: High
+   CWE: CWE-78 (https://cwe.mitre.org/data/definitions/78.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b603_subprocess_without_shell_equals_true.html
+   Location: ./nash.py:255:8
+254	    try:
+255	        subprocess.run(comando, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+256	        return True
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./oraculo_nash.py:145:35
+144	    """V: dado ilegível tem que gerar ERRO EXPLÍCITO. Nunca pode ser descartado nem virar zero em silêncio."""
+145	    base = lambda: {"param": gerar(random.Random(5), 0)["param"], "danos": [["F1","Dano V","10/10/2024",5000.0,"R6","",""]], "custas": [], "deducoes": [["D1","10/01/2026",1000.0]]}
+146	    casos = [("bloqueio com data inexistente (31/02)", lambda c: c["deducoes"].__setitem__(0, ["D1","31/02/2026",1000.0])),
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: ./oraculo_nash.py:159:8
+158	        try: rodar(c); falha("V", f"entrada inválida aceita sem erro: {nome}")
+159	        except Exception: pass
+160	rng = random.Random(7)
+
+--------------------------------------------------
+>> Issue: [B311:blacklist] Standard pseudo-random generators are not suitable for security/cryptographic purposes.
+   Severity: Low   Confidence: High
+   CWE: CWE-330 (https://cwe.mitre.org/data/definitions/330.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/blacklists/blacklist_calls.html#b311-random
+   Location: ./oraculo_nash.py:160:6
+159	        except Exception: pass
+160	rng = random.Random(7)
+161	for n in range(1, 81): checar(gerar(rng, n), n)
+
+--------------------------------------------------
+>> Issue: [B110:try_except_pass] Try, Except, Pass detected.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html
+   Location: ./processar_calculo.py:108:8
+107	                max_length = len(str(cell.value))
+108	        except:
+109	            pass
+110	    ws.column_dimensions[col_letter].width = max_length + 2
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:36:4
+35	    f_cm, f_jur = nash.calc_tjmg_juros(mock_tjmg, d_inicio, d_inicio, d_fim)
+36	    assert f_jur == pytest.approx(0.10)
+37	    assert f_cm == pytest.approx(1.01 ** 10)
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:37:4
+36	    assert f_jur == pytest.approx(0.10)
+37	    assert f_cm == pytest.approx(1.01 ** 10)
+38	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:43:4
+42	    f_cm, f_jur = nash.calc_selic_pura(mock_bcb, d_inicio, d_inicio, d_fim)
+43	    assert f_cm == 1.0 
+44	    assert f_jur == pytest.approx((1.01 ** 3) - 1.0) 
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:44:4
+43	    assert f_cm == 1.0 
+44	    assert f_jur == pytest.approx((1.01 ** 3) - 1.0) 
+45	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:50:4
+49	    f_cm, f_jur = nash.calc_tjmg_juros_selic(mock_tjmg, mock_bcb, d_inicio, d_inicio, d_fim)
+50	    assert f_cm > 1.0
+51	    assert f_jur > 0.0
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:51:4
+50	    assert f_cm > 1.0
+51	    assert f_jur > 0.0
+52	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:57:4
+56	    f_cm, f_jur = nash.calc_tjmg_leinova(mock_tjmg, mock_bcb, d_inicio, d_inicio, d_fim)
+57	    assert f_cm > 1.0
+58	    assert f_jur > 0.0
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:58:4
+57	    assert f_cm > 1.0
+58	    assert f_jur > 0.0
+59	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:64:4
+63	    f_cm, f_jur = nash.calc_selic_leinova(mock_bcb, d_inicio, d_inicio, d_fim)
+64	    assert f_cm > 1.0
+65	    assert f_jur >= 0.0
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:65:4
+64	    assert f_cm > 1.0
+65	    assert f_jur >= 0.0
+66	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:71:4
+70	    f_cm, f_jur = nash.calc_leinova_pura(mock_bcb, d_inicio, d_inicio, d_fim)
+71	    assert f_cm > 1.0
+72	    assert f_jur == 0.0
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:72:4
+71	    assert f_cm > 1.0
+72	    assert f_jur == 0.0
+73	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:78:4
+77	    f_cm, f_jur = nash.calc_tjmg_taxalegal_retroativa(mock_tjmg, mock_bcb, d_inicio, d_inicio, d_fim)
+78	    assert f_cm > 1.0
+79	    assert f_jur == 0.0 
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:79:4
+78	    assert f_cm > 1.0
+79	    assert f_jur == 0.0 
+80	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:85:4
+84	    f_cm, f_jur = nash.calc_fazenda_publica(mock_bcb, d_inicio, d_inicio, d_fim)
+85	    assert f_cm > 1.0
+86	    assert f_jur > 0.0
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:86:4
+85	    assert f_cm > 1.0
+86	    assert f_jur > 0.0
+87	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:93:4
+92	    f_jur_delta = jur_t2 - jur_t1
+93	    assert f_jur_delta == pytest.approx(0.05) 
+94	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:107:4
+106	    
+107	    assert risco_atualizado_total == 22500.0
+108	    assert proveito == 16500.0 
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:108:4
+107	    assert risco_atualizado_total == 22500.0
+108	    assert proveito == 16500.0 
+109	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:111:4
+110	def test_limpeza_de_moeda():
+111	    assert nash.limpar_moeda("1.500,50") == 1500.50
+112	    assert nash.limpar_moeda("800,25") == 800.25
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:112:4
+111	    assert nash.limpar_moeda("1.500,50") == 1500.50
+112	    assert nash.limpar_moeda("800,25") == 800.25
+113	    assert nash.limpar_moeda("500") == 500.0
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:113:4
+112	    assert nash.limpar_moeda("800,25") == 800.25
+113	    assert nash.limpar_moeda("500") == 500.0
+114	    assert nash.limpar_moeda("NaN") == 0.0
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:114:4
+113	    assert nash.limpar_moeda("500") == 500.0
+114	    assert nash.limpar_moeda("NaN") == 0.0
+115	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:155:4
+154	    # 4. Lê o Laudo gerado para validar a correção matemática
+155	    assert output_file.exists(), "O laudo de liquidação não foi gerado!"
+156	    
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:175:4
+174	    # Aserções de auditoria atualizadas para a v3.0
+175	    assert "Lei 14.905" in regra_aplicada, f"Erro: A regra das custas não foi fixada na Lei Nova. Registou: {regra_aplicada}"
+176	    assert valor_exigivel > 0.0, "Erro Crítico: O valor exigível das custas ficou a zeros na Conta Gráfica!"
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:176:4
+175	    assert "Lei 14.905" in regra_aplicada, f"Erro: A regra das custas não foi fixada na Lei Nova. Registou: {regra_aplicada}"
+176	    assert valor_exigivel > 0.0, "Erro Crítico: O valor exigível das custas ficou a zeros na Conta Gráfica!"
+177	    assert valor_exigivel > 464.64, "Erro: O valor exigível não sofreu atualização monetária."
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:177:4
+176	    assert valor_exigivel > 0.0, "Erro Crítico: O valor exigível das custas ficou a zeros na Conta Gráfica!"
+177	    assert valor_exigivel > 464.64, "Erro: O valor exigível não sofreu atualização monetária."
+178	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:209:4
+208	    nash.executar_nash(input_file, output_file)
+209	    assert output_file.exists(), "O laudo não foi gerado."
+210	
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:230:4
+229	
+230	    assert achou_multa, "Multa do 523 não foi lançada no laudo."
+231	    
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: ./test_nash.py:234:4
+233	    multa_esperada = ((subtotal + honorarios) - 2000.0) * 0.10
+234	    assert valor_multa == pytest.approx(multa_esperada, rel=1e-4), "O pagamento parcial de R$ 2.000,00 não foi deduzido corretamente da base da multa."
+
+--------------------------------------------------
+
+Code scanned:
+	Total lines of code: 2800
+	Total lines skipped (#nosec): 0
+	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 0
+
+Run metrics:
+	Total issues (by severity):
+		Undefined: 0
+		Low: 73
+		Medium: 0
+		High: 0
+	Total issues (by confidence):
+		Undefined: 0
+		Low: 0
+		Medium: 0
+		High: 73
+Files skipped (0):
