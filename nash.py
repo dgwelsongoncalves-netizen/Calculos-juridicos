@@ -652,7 +652,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
             f_cm_hon, f_jur_hon = get_fator_calculo(regra_predominante, data_sentenca, data_transito_c if teve_transito else pd.NaT, data_calculo)
             hon_calc_princ = hon_fixo * f_cm_hon; hon_calc_juros = hon_calc_princ * f_jur_hon
         elif hon_fixo > 0: hon_calc_princ = hon_fixo
-        else: hon_calc_princ = (subtotal_princ + subtotal_juros) * hon_perc
+        else: hon_calc_princ = (total_princ_danos + total_juros_danos) * hon_perc
             
         hon_calc_princ *= prop_hon; hon_calc_juros *= prop_hon
         hon_exigivel_princ = 0.0 if jg_adversa else hon_calc_princ
@@ -701,6 +701,10 @@ def executar_nash(caminho_entrada, arquivo_saida):
             val_princ = valor * f_cm
             s = sal(grupo_de(regra)); s[0] += val_princ; s[1] += val_princ * f_jur
 
+        s = sal(grupo_de(regra)); s[0] += val_princ; s[1] += val_princ * f_jur
+
+        base_condenacao_cg = P_tot() + J_tot()
+
         for idx, row in df_custas.iterrows():
             data_cm_c = row['Data Desembolso']
             if pd.isna(data_cm_c) or data_cm_c > data_corte or jg_adversa: continue
@@ -720,8 +724,8 @@ def executar_nash(caminho_entrada, arquivo_saida):
             hon_suc_princ = (hon_fixo * f_cm) * prop_hon
             hon_suc_jur = hon_suc_princ * f_jur
         elif hon_fixo > 0 and not jg_adversa: hon_suc_princ = hon_fixo * prop_hon
-        elif not jg_adversa: hon_suc_princ = ((P_tot() + J_tot()) * hon_perc) * prop_hon
-
+        elif not jg_adversa: hon_suc_princ = (base_condenacao_cg * hon_perc) * prop_hon
+        
         if hon_suc_princ > 0 or hon_suc_jur > 0:
             s = sal(grupo_pred); s[0] += hon_suc_princ; s[1] += hon_suc_jur
             historico_cg.append((data_corte, f"(+) Honorários Suc. ({f'{hon_perc*100:.0f}%' if hon_fixo==0 else 'Fixos'}{f' rateados a {prop_hon*100:.0f}%' if prop_hon<1.0 else ''})", hon_suc_princ, hon_suc_jur, 0.0, P_tot()+J_tot()))
