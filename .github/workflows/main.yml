@@ -54,6 +54,5 @@ jobs:
           tag_name: v${{ steps.get_version.outputs.versao }}
           name: Nash System v${{ steps.get_version.outputs.versao }}
           body: "Atualizacao automatica gerada pelo GitHub Actions com suporte a interface guiada e auto-save."
-          latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
