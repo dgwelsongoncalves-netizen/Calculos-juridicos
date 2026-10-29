@@ -5,34 +5,53 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - name: Baixar o codigo do repositorio
-      uses: actions/checkout@v4
+      - name: Baixar o codigo do repositorio
+        uses: actions/checkout@v4
 
-    - name: Configurar o Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
+      - name: Configurar o Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-    - name: Instalar bibliotecas fixadas
-      run: |
-        python -m pip install --upgrade pip
-        pip install pyinstaller
-        pip install -r requirements.txt
+      - name: Instalar bibliotecas fixadas
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
 
-    - name: Fabricar o aplicativo Windows (OneFile)
-      run: |
-        pyinstaller --noconfirm --windowed --onefile --name "nash" --icon=dr_nash.ico --add-data "dr_nash.ico;." interface_v3.py
+      - name: Fabricar o aplicativo Windows (OneFile)
+        run: |
+          pyinstaller --noconfirm --windowed --onefile --name "nash" --icon=dr_nash.ico --add-data "dr_nash.ico;." interface_v3.py
 
-    - name: Compilar o Instalador (Inno Setup)
-      run: iscc gerador_nash.iss
+      - name: Compilar o Instalador (Inno Setup)
+        run: iscc gerador_nash.iss
 
-    - name: Salvar Instalador para download
-      uses: actions/upload-artifact@v4
-      with:
-        name: Instalador_Nash_System
-        path: Instalador_Final/Instalador_Nash_System.exe
+      - name: Salvar Instalador para download (Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Instalador_Nash_System
+          path: Instalador_Final/Instalador_Nash_System.exe
+
+      - name: Publicar Atualizacao Automatica (GitHub Releases)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $versao = python -c "import re, pathlib; m = re.search(r'__version__\s*=\s*[\"\'']([^\"\'']+)[\"\'']', pathlib.Path('nash.py').read_text(encoding='utf-8')); print(m.group(1) if m else '4.1.3')"
+          $tag = "v$versao"
+          $exePath = "Instalador_Final/Instalador_Nash_System.exe"
+          Write-Host "Publicando release automatica para a tag: $tag"
+          gh release view $tag > $null 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $exePath --clobber
+          } else {
+            gh release create $tag $exePath --title "Nash System $tag" --notes "Instalador oficial gerado automaticamente pelo GitHub Actions." --latest
+          }

@@ -10,7 +10,7 @@ import subprocess
 import re
 from pathlib import Path
 
-__version__ = "4.1.2" # Validação estrita de entrada, saldo por regra após bloqueio, nome do relatório interno
+__version__ = "4.1.3"  # Correcao Conta Grafica, Acordo_Params vazio, custas tardias e base de honorarios
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -344,8 +344,10 @@ def executar_nash(caminho_entrada, arquivo_saida):
     
     df_param = pd.read_excel(xls, sheet_name='Parametros', header=None, index_col=0)
     def get_param(nome, default=None, is_date=False, df_orig=df_param):
+        if df_orig is None or df_orig.empty or df_orig.shape[1] == 0:
+            return default
         try: val = df_orig.iloc[:, 0].loc[nome]
-        except KeyError: return default
+        except (KeyError, IndexError): return default
         if pd.isna(val) or str(val).strip() == '': return default
         if is_date:
             if isinstance(val, (int, float)) and not isinstance(val, bool):
@@ -593,10 +595,13 @@ def executar_nash(caminho_entrada, arquivo_saida):
     juros_custas_param = str(get_param('Juros sobre Custas', 'Sim')).strip().upper()
     aplica_juros_custas = 'NÃO' not in juros_custas_param and 'NAO' not in juros_custas_param
 
+    # Evita que uma "Data do Trânsito" anterior à propositura (usada como data de inadimplemento extrajudicial) gere juros retroativos em custas
+    transito_valido_custas = teve_transito and (pd.isna(data_propositura) or data_transito_c >= data_propositura)
+
     for idx, row in df_custas.iterrows():
         data_cm_c = row['Data Desembolso']
         if pd.isna(data_cm_c): continue
-        data_jur_c = data_transito_c if teve_transito else pd.NaT
+        data_jur_c = max(data_transito_c, data_cm_c) if (transito_valido_custas and aplica_juros_custas) else pd.NaT
         if is_fazenda:
             f_cm, f_jur = calc_fazenda_publica(df_bcb, data_cm_c, data_jur_c, data_calculo)
             nome_base_regra = "Fazenda P."
@@ -604,16 +609,17 @@ def executar_nash(caminho_entrada, arquivo_saida):
             f_cm, f_jur = calc_leinova_pura(df_bcb, data_cm_c, data_jur_c, data_calculo)
             nome_base_regra = "Lei 14.905/24"
             
-        if not aplica_juros_custas:
+        if not aplica_juros_custas or not transito_valido_custas:
             f_jur = 0.0
-            nome_base_regra += " (Sem Juros)"
+            if not aplica_juros_custas:
+                nome_base_regra += " (Sem Juros)"
             
         val_princ = (row['Valor Histórico'] * f_cm) * prop_custas
         val_jur = val_princ * f_jur
         df_custas.at[idx, 'Exigível'] = 0.0 if jg_adversa else val_princ + val_jur
         df_custas.at[idx, 'Fator CM'] = f_cm
         df_custas.at[idx, 'Fator Juros'] = f_jur
-        df_custas.at[idx, 'Desc_Regra'] = f"{nome_base_regra} (Trânsito)" if teve_transito else f"{nome_base_regra} (S/ Juros)"
+        df_custas.at[idx, 'Desc_Regra'] = f"{nome_base_regra} (Trânsito)" if transito_valido_custas else f"{nome_base_regra} (S/ Juros)"
 
     df_deducoes = pd.DataFrame(); tem_deducao = False
     if 'Deducoes' in xls.sheet_names:
@@ -682,7 +688,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
         data_corte = df_deducoes.iloc[0]['Data bloqueio/deposito']
 
         # Cada regra vira um "grupo" de saldo, corrigido pelo seu próprio motor depois do 1º bloqueio.
-        # (Antes, TODO o saldo seguia a regra da 1ª linha de Danos: o total dependia da ordem das linhas.)
         def grupo_de(regra): return 'FAZ' if is_fazenda else regra
         saldos = {}                                   # grupo -> [principal, juros]
         def sal(g): return saldos.setdefault(g, [0.0, 0.0])
@@ -701,15 +706,15 @@ def executar_nash(caminho_entrada, arquivo_saida):
             val_princ = valor * f_cm
             s = sal(grupo_de(regra)); s[0] += val_princ; s[1] += val_princ * f_jur
 
-        s = sal(grupo_de(regra)); s[0] += val_princ; s[1] += val_princ * f_jur
-
+        # Base de honorários restrita à condenação/dívida principal (Art. 85, § 2º e Art. 827 CPC), sem custas
         base_condenacao_cg = P_tot() + J_tot()
 
         for idx, row in df_custas.iterrows():
             data_cm_c = row['Data Desembolso']
             if pd.isna(data_cm_c) or data_cm_c > data_corte or jg_adversa: continue
-            data_jur_c = data_transito_c if teve_transito else pd.NaT
+            data_jur_c = max(data_transito_c, data_cm_c) if (transito_valido_custas and aplica_juros_custas) else pd.NaT
             f_cm, f_jur = calc_fazenda_publica(df_bcb, data_cm_c, data_jur_c, data_corte) if is_fazenda else calc_leinova_pura(df_bcb, data_cm_c, data_jur_c, data_corte)
+            if not aplica_juros_custas or not transito_valido_custas: f_jur = 0.0
             val_princ = (row['Valor Histórico'] * f_cm) * prop_custas
             s = sal(grupo_de('R6')); s[0] += val_princ; s[1] += val_princ * f_jur
 
@@ -725,7 +730,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
             hon_suc_jur = hon_suc_princ * f_jur
         elif hon_fixo > 0 and not jg_adversa: hon_suc_princ = hon_fixo * prop_hon
         elif not jg_adversa: hon_suc_princ = (base_condenacao_cg * hon_perc) * prop_hon
-        
+
         if hon_suc_princ > 0 or hon_suc_jur > 0:
             s = sal(grupo_pred); s[0] += hon_suc_princ; s[1] += hon_suc_jur
             historico_cg.append((data_corte, f"(+) Honorários Suc. ({f'{hon_perc*100:.0f}%' if hon_fixo==0 else 'Fixos'}{f' rateados a {prop_hon*100:.0f}%' if prop_hon<1.0 else ''})", hon_suc_princ, hon_suc_jur, 0.0, P_tot()+J_tot()))
@@ -765,6 +770,14 @@ def executar_nash(caminho_entrada, arquivo_saida):
             sal(grupo_de(resolver_regra(nd.get('Regra', ''))))[0] += float(nd['Valor Histórico'])
             historico_cg.append((d_dano, f"(+) Nova Inclusão: {nd['Descrição']}", P_tot(), J_tot(), 0.0, P_tot()+J_tot()))
 
+        def incluir_custa(nc):
+            if jg_adversa: return
+            d_custa = nc['Data Desembolso']
+            avancar_tempo_cg(d_custa)
+            val_custa = float(nc['Valor Histórico']) * prop_custas
+            sal(grupo_de('R6'))[0] += val_custa
+            historico_cg.append((d_custa, f"(+) Custa Processual: {nc['Descrição']}", P_tot(), J_tot(), 0.0, P_tot()+J_tot()))
+
         for _, row in df_deducoes.iterrows():
             data_ded = row['Data bloqueio/deposito']
             valor_ded = float(row['Valor'])
@@ -773,6 +786,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
 
             despesas_tardias = df_danos[(df_danos['Data Desembolso'] > ultima_data) & (df_danos['Data Desembolso'] <= data_ded) & (df_danos['Valor Histórico'] > 0)].sort_values('Data Desembolso', kind='stable')
             for _, nd in despesas_tardias.iterrows(): incluir_despesa(nd)
+
+            custas_tardias = df_custas[(df_custas['Data Desembolso'] > ultima_data) & (df_custas['Data Desembolso'] <= data_ded) & (df_custas['Valor Histórico'] > 0)].sort_values('Data Desembolso', kind='stable')
+            for _, nc in custas_tardias.iterrows(): incluir_custa(nc)
 
             if data_ded > ultima_data:
                 avancar_tempo_cg(data_ded)
@@ -797,6 +813,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
 
         despesas_finais = df_danos[(df_danos['Data Desembolso'] > ultima_data) & (df_danos['Valor Histórico'] > 0)].sort_values('Data Desembolso', kind='stable')
         for _, nd in despesas_finais.iterrows(): incluir_despesa(nd)
+
+        custas_finais = df_custas[(df_custas['Data Desembolso'] > ultima_data) & (df_custas['Valor Histórico'] > 0)].sort_values('Data Desembolso', kind='stable')
+        for _, nc in custas_finais.iterrows(): incluir_custa(nc)
 
         if ultima_data < data_calculo:
             avancar_tempo_cg(data_calculo)
