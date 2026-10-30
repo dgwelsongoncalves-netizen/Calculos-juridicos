@@ -10,7 +10,7 @@ import subprocess
 import re
 from pathlib import Path
 
-__version__ = "4.1.3"  # Correcao Conta Grafica, Acordo_Params vazio, custas tardias e base de honorarios
+__version__ = "4.1.4"  # Sincronizacao automatica da Tabela TJMG via GitHub e pasta de usuario livre de UAC
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -36,16 +36,58 @@ else:
     PASTA_APP = Path(__file__).parent
     PASTA_TEMP = PASTA_APP
 
-PASTA_TABELAS = PASTA_APP / 'Tabelas_Oficiais'
+# Pasta de tabelas no perfil do usuário (evita bloqueio de Administrador em C:\Program Files no Windows)
+PASTA_TABELAS_BUNDLE = PASTA_APP / 'Tabelas_Oficiais'
+PASTA_TABELAS = Path.home() / '.nash_tabelas' if getattr(sys, 'frozen', False) else PASTA_TABELAS_BUNDLE
+PASTA_TABELAS.mkdir(parents=True, exist_ok=True)
+
 ARQUIVO_TJMG = PASTA_TABELAS / 'tabela_tjmg.xlsx'
 ARQUIVO_CACHE_BCB = PASTA_TABELAS / 'cache_bcb.csv'
+URL_RAW_TJMG = "https://raw.githubusercontent.com/dgwelsongoncalves-netizen/Calculos-juridicos/main/Tabelas_Oficiais/tabela_tjmg.xlsx"
 
-ARQUIVO_LOG = PASTA_APP / "nash_system.log"
+# Se estiver rodando instalado no Windows e a pasta do usuário ainda não tiver as tabelas base, copia do instalador
+if PASTA_TABELAS != PASTA_TABELAS_BUNDLE:
+    import shutil
+    for _arq in ('tabela_tjmg.xlsx', 'cache_bcb.csv'):
+        _orig = PASTA_TABELAS_BUNDLE / _arq
+        _dest = PASTA_TABELAS / _arq
+        if _orig.exists() and not _dest.exists():
+            try: shutil.copy2(_orig, _dest)
+            except Exception: pass
+
+ARQUIVO_LOG = (Path.home() if getattr(sys, 'frozen', False) else PASTA_APP) / "nash_system.log"
 logging.basicConfig(filename=ARQUIVO_LOG, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%d/%m/%Y %H:%M:%S", encoding="utf-8")
 logging.info(f"--- Nash System v{__version__} Iniciado ---")
 
-# --- 2. CARREGAMENTO DE DADOS ---
+# --- 2. CARREGAMENTO E SINCRONIZAÇÃO DE DADOS ---
+def sincronizar_tabela_tjmg_github(forcar=False):
+    """Baixa a tabela_tjmg.xlsx direto do GitHub para a máquina local sem precisar reinstalar o .exe."""
+    import urllib.request
+    try:
+        precisa_baixar = forcar or (not ARQUIVO_TJMG.exists())
+        if not precisa_baixar and ARQUIVO_TJMG.exists():
+            mod_time = pd.Timestamp.fromtimestamp(ARQUIVO_TJMG.stat().st_mtime)
+            hoje = pd.Timestamp.today()
+            if (mod_time.year, mod_time.month) < (hoje.year, hoje.month):
+                precisa_baixar = True
+
+        if not precisa_baixar:
+            return False
+
+        req = urllib.request.Request(URL_RAW_TJMG, headers={"User-Agent": "NashSystem-TableSync", "Cache-Control": "no-cache"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            conteudo = resp.read()
+        if len(conteudo) > 5000:
+            ARQUIVO_TJMG.write_bytes(conteudo)
+            logging.info("Tabela TJMG sincronizada automaticamente a partir do GitHub.")
+            return True
+    except Exception as e:
+        logging.warning(f"Não foi possível sincronizar tabela TJMG via GitHub (usando cópia local): {e}")
+    return False
+
 def carregar_tjmg():
+    preload_heavy_libs()
+    sincronizar_tabela_tjmg_github(forcar=False)
     try:
         if not ARQUIVO_TJMG.exists(): raise FileNotFoundError("O arquivo 'tabela_tjmg.xlsx' não foi encontrado na pasta 'Tabelas_Oficiais'.")
         df = pd.read_excel(ARQUIVO_TJMG, sheet_name='Plan1', skiprows=8, names=['ANO', 'MÊS', 'ÍNDICE']).dropna(subset=['MÊS', 'ÍNDICE'])
@@ -268,7 +310,6 @@ def limpar_moeda(val):
     except: return 0.0
 
 class EntradaInvalidaError(ValueError):
-    """Dado de entrada ilegível. Sobe até o usuário: NUNCA pode ser engolido nem virar zero em silêncio."""
     pass
 
 def _vazio(x):
@@ -278,7 +319,6 @@ def _vazio(x):
     return isinstance(x, str) and x.strip() == ''
 
 def converter_datas_estrito(serie, aba, coluna):
-    """Células vazias viram NaT. Texto ilegível, data impossível (31/02) ou número solto (44966) levantam erro."""
     saida = []
     for idx, x in serie.items():
         onde = f"Aba '{aba}', linha {int(idx) + 2}, coluna '{coluna}'"
@@ -292,7 +332,6 @@ def converter_datas_estrito(serie, aba, coluna):
     return pd.to_datetime(pd.Series(saida, index=serie.index, dtype=object))
 
 def limpar_moeda_estrito(val, onde):
-    """Vazio vira 0,0; texto que não é valor (ex.: 'abc') levanta erro em vez de virar zero."""
     if _vazio(val): return 0.0
     if isinstance(val, (int, float)) and not isinstance(val, bool): return float(val)
     t = str(val).replace('R$', '').replace('$', '').replace(' ', '').strip()
@@ -480,7 +519,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
     df_custas['Fator CM'] = 1.0
     df_custas['Fator Juros'] = 0.0
 
-    # --- ANÁLISE DE VIABILIDADE ESTRATÉGICA ---
     proporcao_custas, nivel_alerta_custas, msg_alerta_custas = analisar_viabilidade_financeira(df_danos, df_custas)
     if nivel_alerta_custas in ["ALERTA", "CRITICO"]:
         gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao_custas, nivel_alerta_custas, df_danos, df_custas, arquivo_saida)
@@ -493,7 +531,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
     def _regra_valida(txt):
         t = str(txt).strip().upper()
         return t if t in REGRAS_VALIDAS else ('R2' if 'SELIC' in t else None)
-    # Regra predominante = a de maior valor histórico (independe da ordem das linhas). Só serve para honorários/multa e linhas sem regra.
     _pesos = {}
     for _, _r in df_danos.iterrows():
         _g = _regra_valida(_r.get('Regra', ''))
@@ -594,8 +631,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
 
     juros_custas_param = str(get_param('Juros sobre Custas', 'Sim')).strip().upper()
     aplica_juros_custas = 'NÃO' not in juros_custas_param and 'NAO' not in juros_custas_param
-
-    # Evita que uma "Data do Trânsito" anterior à propositura (usada como data de inadimplemento extrajudicial) gere juros retroativos em custas
     transito_valido_custas = teve_transito and (pd.isna(data_propositura) or data_transito_c >= data_propositura)
 
     for idx, row in df_custas.iterrows():
@@ -687,13 +722,12 @@ def executar_nash(caminho_entrada, arquivo_saida):
         historico_cg = []
         data_corte = df_deducoes.iloc[0]['Data bloqueio/deposito']
 
-        # Cada regra vira um "grupo" de saldo, corrigido pelo seu próprio motor depois do 1º bloqueio.
         def grupo_de(regra): return 'FAZ' if is_fazenda else regra
-        saldos = {}                                   # grupo -> [principal, juros]
+        saldos = {}
         def sal(g): return saldos.setdefault(g, [0.0, 0.0])
         def P_tot(): return sum(s[0] for s in saldos.values())
         def J_tot(): return sum(s[1] for s in saldos.values())
-        grupo_pred = grupo_de(regra_predominante)     # honorários e multa entram no grupo da regra de maior valor
+        grupo_pred = grupo_de(regra_predominante)
 
         for idx, row in df_danos.iterrows():
             data_cm = row['Data Desembolso']
@@ -706,7 +740,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
             val_princ = valor * f_cm
             s = sal(grupo_de(regra)); s[0] += val_princ; s[1] += val_princ * f_jur
 
-        # Base de honorários restrita à condenação/dívida principal (Art. 85, § 2º e Art. 827 CPC), sem custas
         base_condenacao_cg = P_tot() + J_tot()
 
         for idx, row in df_custas.iterrows():
@@ -754,7 +787,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
             for g, s in saldos.items():
                 cm_T1, jur_T1 = get_fator_calculo(g, data_corte, data_corte, ultima_data)
                 cm_T2, jur_T2 = get_fator_calculo(g, data_corte, data_corte, d_alvo)
-                if g == 'R2' and not is_fazenda:     # Selic: o fator único vem no campo "juros"
+                if g == 'R2' and not is_fazenda:
                     f_cm_delta = (1 + jur_T2) / (1 + jur_T1) if (1 + jur_T1) > 0 else 1.0
                     f_jur_delta = 0.0
                 else:
@@ -794,7 +827,6 @@ def executar_nash(caminho_entrada, arquivo_saida):
                 avancar_tempo_cg(data_ded)
                 historico_cg.append((data_ded, "Atualização do Saldo", P_tot(), J_tot(), 0.0, P_tot()+J_tot()))
 
-            # Art. 354 CC: o pagamento abate primeiro os juros e depois o capital (rateado entre os grupos)
             P0, J0 = P_tot(), J_tot()
             abate_juros = min(valor_ded, J0)
             if J0 > 0:
@@ -850,14 +882,11 @@ def gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao, nivel,
     arquivo_saida_base = Path(arquivo_saida_base)
     wb = Workbook()
     ws = wb.active
-    
     tipo = "INVIABILIDADE ECONÔMICA" if nivel == "CRITICO" else "ATENÇÃO FINANCEIRA"
     ws.title = "Visão Estratégica"
     
     f_titulo = Font(name="Arial", size=14, bold=True, color="FFFFFF")
     f_negrito = Font(name="Arial", size=11, bold=True)
-    f_normal = Font(name="Arial", size=11)
-    
     cor_fundo = "FF0000" if nivel == "CRITICO" else "FFC000"
     fundo_alerta = PatternFill(start_color=cor_fundo, end_color=cor_fundo, fill_type="solid")
     fundo_cinza = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
@@ -902,7 +931,6 @@ def gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao, nivel,
     linha += 2
     ws.cell(row=linha, column=1, value="ANÁLISE DE RISCO PATRIMONIAL:").font = f_negrito
     linha += 1
-    
     parte_adversa = "Autor" if atuacao == "RÉU" else "Réu"
     
     if jg_adversa:
@@ -920,7 +948,7 @@ def gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao, nivel,
     
     prefixo = "Relatorio_Inviabilidade_" if nivel == "CRITICO" else "Relatorio_Atencao_"
     nome_base = re.sub(r'^laudo[ _]', prefixo, arquivo_saida_base.name, flags=re.IGNORECASE)
-    if nome_base == arquivo_saida_base.name: nome_base = prefixo + arquivo_saida_base.name   # nunca reutiliza o nome do laudo
+    if nome_base == arquivo_saida_base.name: nome_base = prefixo + arquivo_saida_base.name
     path_final = arquivo_saida_base.parent / nome_base
     contador = 1
     while path_final.exists():
@@ -929,7 +957,7 @@ def gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao, nivel,
     wb.save(str(path_final))
     logging.info(f"Relatório estratégico gerado: {path_final.name}")
 
-# --- 7. GERAÇÃO DE ARQUIVOS PRINCIPAIS (ACORDO, LAUDO PADRÃO E ÊXITO) ---
+# --- 7. GERAÇÃO DE ARQUIVOS PRINCIPAIS ---
 def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_pago, saldo_base, f_cm, f_jur, val_princ, val_juros, subtotal, multa_perc, val_multa, hon_perc, val_hon, multa_523, hon_523, total_geral, df_pagas, arquivo_saida):
     wb = Workbook()
     ws = wb.active
@@ -954,24 +982,20 @@ def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_p
     for r in range(4, 7): ws.cell(row=r, column=1).font = f_negrito
 
     linha = 8
-    
     if not df_pagas.empty:
         ws.merge_cells(f'A{linha}:F{linha}'); ws[f'A{linha}'] = "1. HISTÓRICO DE PARCELAS PAGAS (AMORTIZAÇÃO)"
         ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
-        
         cabs_p = ['ID / Parcela', 'Data Pagamento', 'Valor Pago (R$)', '', '', '']
         for i, t in enumerate(cabs_p, 1): 
             ws.cell(row=linha, column=i, value=t).font = f_negrito
             if t != '': ws.cell(row=linha, column=i).border = borda
             ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center")
         linha += 1
-        
         for _, r in df_pagas.iterrows():
             ws.cell(row=linha, column=1, value=r['Identificação / Parcela']).border = borda
             ws.cell(row=linha, column=2, value=r['Data do Pagamento'].strftime('%d/%m/%Y')).border = borda
             ws.cell(row=linha, column=3, value=r['Valor Pago (R$)']).number_format = moeda; ws.cell(row=linha, column=3).border = borda
             linha += 1
-            
         linha += 1
 
     ws.merge_cells(f'A{linha}:F{linha}'); ws[f'A{linha}'] = "2. APURAÇÃO E ATUALIZAÇÃO DO SALDO DEVEDOR"
@@ -988,8 +1012,7 @@ def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_p
         linha += 1
 
     add_total("Valor Original Confessado (Reversão de Desconto):", valor_confessado)
-    if total_pago > 0:
-        add_total("(-) Soma das Parcelas Pagas:", total_pago)
+    if total_pago > 0: add_total("(-) Soma das Parcelas Pagas:", total_pago)
     add_total("(=) SALDO DEVEDOR BASE (Na data do Inadimplemento):", saldo_base, True, True)
     linha += 1
     
@@ -1000,16 +1023,10 @@ def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_p
     add_total("SUBTOTAL ATUALIZADO:", subtotal, True, True)
     linha += 1
     
-    if val_multa > 0:
-        add_total(f"(+) Multa Moratória Contratual ({multa_perc*100:.0f}%):", val_multa)
-    if val_hon > 0:
-        add_total(f"(+) Honorários de Execução/Retomada ({hon_perc*100:.0f}%):", val_hon)
-        
-    if multa_523 > 0:
-        add_total("(+) Multa Art. 523 CPC (10%):", multa_523)
-    if hon_523 > 0:
-        add_total("(+) Honorários Art. 523 CPC (10%):", hon_523)
-        
+    if val_multa > 0: add_total(f"(+) Multa Moratória Contratual ({multa_perc*100:.0f}%):", val_multa)
+    if val_hon > 0: add_total(f"(+) Honorários de Execução/Retomada ({hon_perc*100:.0f}%):", val_hon)
+    if multa_523 > 0: add_total("(+) Multa Art. 523 CPC (10%):", multa_523)
+    if hon_523 > 0: add_total("(+) Honorários Art. 523 CPC (10%):", hon_523)
     add_total("TOTAL GERAL DEVIDO PELO DESCUMPRIMENTO:", total_geral, True, True)
     linha += 1
 
@@ -1022,10 +1039,9 @@ def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_p
     
     nome_saida = str(arquivo_saida).replace('laudo ', 'Quebra_de_Acordo_')
     if not nome_saida.endswith('.xlsx'): nome_saida += '.xlsx'
-    path_final = Path(nome_saida)
-            
-    wb.save(str(path_final))
-    converter_para_pdf(path_final)
+    Path(nome_saida).parent.mkdir(parents=True, exist_ok=True)
+    wb.save(nome_saida)
+    converter_para_pdf(Path(nome_saida))
 
 def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal, hon, multa, hon_523, total, arquivo_saida, houve_inadimplemento, termo_juros_raw, historico, base_hon, prop_hon, prop_custas, hon_perc, hon_fixo, valor_pago_parcial=0.0):
     wb = Workbook()
@@ -1083,9 +1099,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
             ws.cell(row=linha, column=4, value=r['Valor Histórico']).number_format = moeda; ws.cell(row=linha, column=4).border = borda
             ws.cell(row=linha, column=5, value=r.get('Fase1_CM', 1.0)).number_format = '0.0000000'; ws.cell(row=linha, column=5).border = borda
             ws.cell(row=linha, column=6, value=r.get('Fase1_Jur', 0.0)).number_format = '0.00%'; ws.cell(row=linha, column=6).border = borda
-            
-            regra_exibida = r.get('Regra_Fase1', r.get('Desc_Regra', ''))
-            ws.cell(row=linha, column=7, value=regra_exibida).border = borda
+            ws.cell(row=linha, column=7, value=r.get('Regra_Fase1', r.get('Desc_Regra', ''))).border = borda
             
             val_fase1 = r.get('Fase1_Subtotal', r['Valor Atualizado'])
             subtotal_fase1_global += val_fase1
@@ -1122,18 +1136,11 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         for _, r in df_danos.iterrows():
             ws.cell(row=linha, column=1, value=r['ID / Folha']).border = borda
             ws.cell(row=linha, column=2, value=r['Descrição']).border = borda
-            
-            val_fase1 = r.get('Fase1_Subtotal', r['Valor Atualizado'])
-            ws.cell(row=linha, column=3, value=val_fase1).number_format = moeda; ws.cell(row=linha, column=3).border = borda
-            
+            ws.cell(row=linha, column=3, value=r.get('Fase1_Subtotal', r['Valor Atualizado'])).number_format = moeda; ws.cell(row=linha, column=3).border = borda
             ws.cell(row=linha, column=4, value=r.get('Fase2_IPCA', 1.0)).number_format = '0.0000000'; ws.cell(row=linha, column=4).border = borda
             ws.cell(row=linha, column=5, value=r.get('Fase2_TL', 0.0)).number_format = '0.00%'; ws.cell(row=linha, column=5).border = borda
-            
-            acrescimo = r.get('Acrecismo', 0.0)
-            ws.cell(row=linha, column=6, value=acrescimo).number_format = moeda; ws.cell(row=linha, column=6).border = borda
-            
-            regra_nova = r.get('Regra_Fase2', '-')
-            ws.cell(row=linha, column=7, value=regra_nova).border = borda
+            ws.cell(row=linha, column=6, value=r.get('Acrecismo', 0.0)).number_format = moeda; ws.cell(row=linha, column=6).border = borda
+            ws.cell(row=linha, column=7, value=r.get('Regra_Fase2', '-')).border = borda
             
             val_final = r['Valor Atualizado']
             subtotal_danos += val_final
@@ -1146,10 +1153,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         ws.cell(row=linha, column=8, value=subtotal_danos).number_format = moeda; ws.cell(row=linha, column=8).font = f_negrito; ws.cell(row=linha, column=8).fill = fundo_cinza
         for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
         linha += 2
-        
-        num_custas = "2"
-        num_resumo = "3"
-        
+        num_custas = "2"; num_resumo = "3"
     else:
         ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = "1. DANOS MATERIAIS E VALORES PRINCIPAIS"
         ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
@@ -1182,9 +1186,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         ws.cell(row=linha, column=8, value=subtotal_danos).number_format = moeda; ws.cell(row=linha, column=8).font = f_negrito; ws.cell(row=linha, column=8).fill = fundo_cinza
         for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
         linha += 2
-        
-        num_custas = "2"
-        num_resumo = "3"
+        num_custas = "2"; num_resumo = "3"
 
     ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = f"{num_custas}. CUSTAS E DESPESAS PROCESSUAIS"
     ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
@@ -1224,28 +1226,21 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         
         ws.merge_cells(f'A{linha}:B{linha}'); ws.merge_cells(f'C{linha}:D{linha}')
         cabs_cg_titles = ['Data', 'Evento', 'Principal Corrigido', 'Juros Acumulados', 'Valor Pago/Bloqueio', 'Saldo Devedor Total']
-        
         ws.cell(row=linha, column=1, value='Data').font = f_negrito; ws.cell(row=linha, column=1).border = borda; ws.cell(row=linha, column=1).fill = fundo_cinza; ws.cell(row=linha, column=1).alignment = Alignment(vertical="center", horizontal="center")
         ws.cell(row=linha, column=2).border = borda; ws.cell(row=linha, column=2).fill = fundo_cinza
         ws.cell(row=linha, column=3, value='Evento').font = f_negrito; ws.cell(row=linha, column=3).border = borda; ws.cell(row=linha, column=3).fill = fundo_cinza; ws.cell(row=linha, column=3).alignment = Alignment(vertical="center", horizontal="center")
         ws.cell(row=linha, column=4).border = borda; ws.cell(row=linha, column=4).fill = fundo_cinza
-        
         for i, t in enumerate(cabs_cg_titles[2:], 5): 
-            ws.cell(row=linha, column=i, value=t).font = f_negrito
-            ws.cell(row=linha, column=i).border = borda
-            ws.cell(row=linha, column=i).fill = fundo_cinza
-            ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center")
+            ws.cell(row=linha, column=i, value=t).font = f_negrito; ws.cell(row=linha, column=i).border = borda; ws.cell(row=linha, column=i).fill = fundo_cinza; ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center")
         linha += 1
         
         for data, evento, princ, jur, pago, saldo in historico:
             ws.merge_cells(f'A{linha}:B{linha}'); ws.merge_cells(f'C{linha}:D{linha}')
             ws.cell(row=linha, column=1, value=data.strftime('%d/%m/%Y')).border = borda; ws.cell(row=linha, column=2).border = borda
             ws.cell(row=linha, column=3, value=evento).border = borda; ws.cell(row=linha, column=4).border = borda
-            
             if "Restituir" in str(evento).title(): ws.cell(row=linha, column=3).font = Font(name="Arial", size=11, bold=True, color="FF0000")
             elif "Bloqueio" in str(evento) or "Depósito" in str(evento): ws.cell(row=linha, column=3).font = f_negrito
             else: ws.cell(row=linha, column=3).font = f_normal
-                
             ws.cell(row=linha, column=5, value=princ).number_format = moeda; ws.cell(row=linha, column=5).border = borda
             ws.cell(row=linha, column=6, value=jur).number_format = moeda; ws.cell(row=linha, column=6).border = borda
             ws.cell(row=linha, column=7, value=pago if pago > 0 else "-").number_format = moeda if pago > 0 else 'General'; ws.cell(row=linha, column=7).border = borda
@@ -1257,7 +1252,6 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
         ws.cell(row=linha, column=8, value=(historico[-1][5] if historico else 0.0)).number_format = moeda
         ws.cell(row=linha, column=8).font = f_titulo; ws.cell(row=linha, column=8).fill = fundo_escuro
         for i in range(1, 9): ws.cell(row=linha, column=i).border = borda
-            
     else:
         ws.merge_cells(f'A{linha}:H{linha}'); ws[f'A{linha}'] = f"{num_resumo}. RESUMO DA LIQUIDAÇÃO"
         ws[f'A{linha}'].font = f_titulo; ws[f'A{linha}'].fill = fundo_escuro; ws[f'A{linha}'].alignment = Alignment(horizontal="center"); linha += 1
@@ -1291,6 +1285,7 @@ def gerar_laudo_excel(processo, teve_transito, jg, df_danos, df_custas, subtotal
     nome_saida = str(arquivo_saida)
     if nome_saida.endswith(('.ods', '.xls')): nome_saida = nome_saida.rsplit('.', 1)[0] + '.xlsx'
     path_final = Path(nome_saida)
+    path_final.parent.mkdir(parents=True, exist_ok=True)
     if path_final.exists():
         pasta = path_final.parent; nome_base = path_final.stem; ext = path_final.suffix; contador = 1
         while True:
@@ -1310,7 +1305,6 @@ def gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida_base):
     f_titulo = Font(name="Arial", size=14, bold=True, color="FFFFFF")
     f_negrito = Font(name="Arial", size=11, bold=True)
     f_sucesso = Font(name="Arial", size=12, bold=True, color="107C41") 
-    
     fundo_escuro = PatternFill(start_color="1F3864", end_color="1F3864", fill_type="solid") 
     fundo_cinza = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
     fundo_verde = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
@@ -1322,7 +1316,6 @@ def gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida_base):
     
     ws.merge_cells('A2:D2'); ws['A2'] = f"Processo: {processo}"
     ws['A2'].alignment = Alignment(horizontal="center"); ws['A2'].font = Font(name="Arial", size=10, italic=True)
-
     ws.append([]) 
     
     cabs = ['Descrição da Verba (Pedidos)', 'Risco Atualizado (O que o autor pediu)', 'Condenação Atualizada (O que o autor levou)', 'Economia Gerada (Proveito do Cliente)']
@@ -1334,27 +1327,22 @@ def gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida_base):
         
     linha = 5
     soma_risco = soma_condenacao = soma_proveito = 0.0
-    
     for _, r in df_exito.iterrows():
         ws.cell(row=linha, column=1, value=r['Descrição']).border = borda
         ws.cell(row=linha, column=2, value=r['Risco Atual']).number_format = moeda; ws.cell(row=linha, column=2).border = borda
         ws.cell(row=linha, column=3, value=r['Valor Atualizado']).number_format = moeda; ws.cell(row=linha, column=3).border = borda
         ws.cell(row=linha, column=4, value=r['Proveito']).number_format = moeda; ws.cell(row=linha, column=4).border = borda
         ws.cell(row=linha, column=4).font = f_sucesso; ws.cell(row=linha, column=4).fill = fundo_verde
-        
-        soma_risco += r['Risco Atual']; soma_condenacao += r['Valor Atualizado']
-        soma_proveito += r['Proveito']
+        soma_risco += r['Risco Atual']; soma_condenacao += r['Valor Atualizado']; soma_proveito += r['Proveito']
         linha += 1
         
     ws.append([])
     linha += 1
-    
     ws.cell(row=linha, column=1, value="TOTAIS GERAIS:").font = Font(name="Arial", size=12, bold=True)
     ws.cell(row=linha, column=1).alignment = Alignment(horizontal="right")
     ws.cell(row=linha, column=2, value=soma_risco).number_format = moeda; ws.cell(row=linha, column=2).font = f_negrito
     ws.cell(row=linha, column=3, value=soma_condenacao).number_format = moeda; ws.cell(row=linha, column=3).font = f_negrito
-    ws.cell(row=linha, column=4, value=soma_proveito).number_format = moeda; ws.cell(row=linha, column=4).font = f_sucesso; ws.cell(row=linha, column=4).fill = fundo_verde
-    
+    ws.cell(row=linha, column=4, value=soma_proveito).number_format = moeda; ws.cell(row=linha, column=4).font = f_sucesso; ws.cell(row=linha, column=4).fill = fundo_cinza
     for c in range(1, 5): ws.cell(row=linha, column=c).border = borda
 
     ws.column_dimensions['A'].width = 35; ws.column_dimensions['B'].width = 35
@@ -1371,7 +1359,7 @@ def gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida_base):
         pasta, nome_raiz, ext, contador = path_final.parent, path_final.stem, path_final.suffix, 1
         while True:
             novo_caminho = pasta / f"{nome_raiz} ({contador}){ext}"
-            if not novo_caminho.exists(): path_final = novo_caminho; break
+            if not novo_cansiho := novo_caminho.exists(): path_final = novo_caminho; break
             contador += 1
             
     wb.save(str(path_final))

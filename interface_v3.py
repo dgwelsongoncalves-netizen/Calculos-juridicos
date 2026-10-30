@@ -21,12 +21,11 @@ ARQUIVO_RASCUNHO = Path.home() / ".nash_rascunho_auto.xlsx"
 class NashDataEntryGUI:
     def __init__(self, root):
         self.root = root
-        versao_atual = getattr(nash, "__version__", "4.1.3")
+        versao_atual = getattr(nash, "__version__", "4.1.4")
         self.root.title(f"Nash System v{versao_atual} — Liquidação Judicial Assistida")
         self.root.geometry("1040x740")
         self.root.minsize(960, 680)
 
-        # Opções de Regras Globais
         self.opcoes_regras = [
             "R1 - TJMG + Juros de 1% a.m.",
             "R2 - Taxa Selic (critério único)",
@@ -45,15 +44,11 @@ class NashDataEntryGUI:
         self._montar_layout_principal(versao_atual)
         self.aplicar_modo_calculo()
 
-        # Restaura rascunho automático se existir
         self.root.after(200, self._tentar_restaurar_rascunho)
-        # Verifica atualização silenciosamente em background (Padrão Windows)
         self.root.after(1500, lambda: self.verificar_atualizacao_background(silencioso=True))
-        # Proteção ao fechar a janela no "X"
         self.root.protocol("WM_DELETE_WINDOW", self.ao_fechar_janela)
 
     def _montar_layout_principal(self, versao_atual):
-        # 1. Cabeçalho Superior Escuro
         header = tk.Frame(self.root, bg="#1F3864", padx=14, pady=8)
         header.pack(fill="x", side="top")
 
@@ -79,15 +74,12 @@ class NashDataEntryGUI:
         )
         self.lbl_autosave.pack(side="right", padx=10)
 
-        # 2. Container Principal
         main_frame = ttk.Frame(self.root, padding=10)
         main_frame.pack(fill="both", expand=True)
 
-        # 3. Rodapé Fixo (Conferência Rápida + Botões de Ação)
         bottom_container = ttk.Frame(main_frame)
         bottom_container.pack(fill="x", side="bottom", pady=(6, 0))
 
-        # Caixa "Conta de Padaria" (Prova dos Nove em tempo real)
         self.frame_resumo = tk.Frame(bottom_container, bg="#EFF6FF", highlightbackground="#2563EB", highlightthickness=1, padx=10, pady=6)
         self.frame_resumo.pack(fill="x", pady=(0, 8))
 
@@ -104,7 +96,6 @@ class NashDataEntryGUI:
         )
         self.lbl_resumo_valores.pack(anchor="w", pady=(2, 0))
 
-        # Barra de Botões Principais
         action_frame = ttk.Frame(bottom_container)
         action_frame.pack(fill="x")
 
@@ -130,7 +121,6 @@ class NashDataEntryGUI:
         )
         btn_so_template.pack(side="right", padx=6)
 
-        # 4. Notebook (Abas)
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill="both", expand=True)
 
@@ -155,9 +145,7 @@ class NashDataEntryGUI:
         self.montar_aba_acordos()
         self.montar_aba_dashboard()
 
-    # ================= ABA 1: PARÂMETROS GUIADOS =================
     def montar_aba_parametros(self):
-        # PASSO 1: Seletor de Natureza do Cálculo
         frame_modo = tk.LabelFrame(
             self.tab_parametros,
             text=" PASSO 1 — Qual é a natureza deste cálculo? (Configura e bloqueia campos desnecessários automaticamente) ",
@@ -183,20 +171,17 @@ class NashDataEntryGUI:
             rb.pack(anchor="w")
             tk.Label(f_card, text=subtitulo, fg="#475569", font=("Arial", 8), justify="left", wraplength=280).pack(anchor="w", pady=(2, 0))
 
-        # Container das 2 Colunas (Passo 2 e Passo 3)
         frame_cols = ttk.Frame(self.tab_parametros)
         frame_cols.pack(fill="both", expand=True)
         frame_cols.columnconfigure(0, weight=1)
         frame_cols.columnconfigure(1, weight=1)
 
-        # PASSO 2 (Coluna Esquerda): Identificação e Datas
         frame_esq = tk.LabelFrame(
             frame_cols, text=" PASSO 2 — Identificação e Datas do Processo ",
             font=("Arial", 9, "bold"), fg="#1F3864", padx=10, pady=8
         )
         frame_esq.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
 
-        # PASSO 3 (Coluna Direita): Honorários, Custas e Art. 523
         frame_dir = tk.LabelFrame(
             frame_cols, text=" PASSO 3 — Honorários, Custas e Cumprimento (Art. 523) ",
             font=("Arial", 9, "bold"), fg="#1F3864", padx=10, pady=8
@@ -231,7 +216,6 @@ class NashDataEntryGUI:
         self._criar_campos_grade(frame_esq, campos_esquerda)
         self._criar_campos_grade(frame_dir, campos_direita)
 
-        # Dica explicativa sobre "Desembolso"
         lbl_dica = tk.Label(
             frame_esq,
             text="💡 Dica: Em 'Desembolso', o Nash usa a data de cada item lançado na Aba 2 (ideal para Notas Fiscais ou Vencimento de Acordo).",
@@ -263,7 +247,6 @@ class NashDataEntryGUI:
     def aplicar_modo_calculo(self):
         modo = self.modo_calculo.get()
         if modo == "EXECUCAO_EXTRA":
-            # Configura automaticamente para Execução de Título Extrajudicial
             self.vars_param["Termo Inicial Juros"].set("Desembolso")
             self.vars_param["Data da Sentença"].set("")
             self.vars_param["Data do Trânsito"].set("")
@@ -285,7 +268,6 @@ class NashDataEntryGUI:
 
         self.atualizar_resumo_rapido()
 
-    # ================= ABA 2: DANOS (COM INSERÇÃO RÁPIDA) =================
     def montar_aba_danos(self):
         f_inline = tk.LabelFrame(
             self.tab_danos,
@@ -361,7 +343,6 @@ class NashDataEntryGUI:
         self.in_dano_id.focus_set()
         self._ao_modificar_dados()
 
-    # ================= ABA 3: CUSTAS (COM INSERÇÃO RÁPIDA) =================
     def montar_aba_custas(self):
         f_inline = tk.LabelFrame(
             self.tab_custas,
@@ -432,7 +413,6 @@ class NashDataEntryGUI:
         self.in_custa_id.focus_set()
         self._ao_modificar_dados()
 
-    # ================= ABA 4: DEDUÇÕES / BLOQUEIOS (COM INSERÇÃO RÁPIDA) =================
     def montar_aba_deducoes(self):
         f_inline = tk.LabelFrame(
             self.tab_deducoes,
@@ -499,7 +479,6 @@ class NashDataEntryGUI:
         self.in_ded_id.focus_set()
         self._ao_modificar_dados()
 
-    # ================= ABA 5: ACORDO NÃO CUMPRIDO =================
     def montar_aba_acordos(self):
         frame_params = tk.LabelFrame(self.tab_acordos, text=" 📝 Parâmetros da Quebra de Acordo ", font=("Arial", 10, "bold"), padx=10, pady=10)
         frame_params.pack(fill="x", pady=(0, 10))
@@ -557,7 +536,6 @@ class NashDataEntryGUI:
         scroll_y_ac.pack(side="right", fill="y")
         self.tree_acordo_pagas.pack(fill="both", expand=True)
 
-    # ================= ABA 6: DASHBOARD ESTRATÉGICO =================
     def montar_aba_dashboard(self):
         frame_header = ttk.Frame(self.tab_dashboard)
         frame_header.pack(fill="x", pady=10)
@@ -579,7 +557,6 @@ class NashDataEntryGUI:
         self.lbl_detalhes = tk.Label(frame_status, text="", font=("Arial", 12), justify="left")
         self.lbl_detalhes.pack(anchor="w")
 
-    # ================= CONFERÊNCIA RÁPIDA E AUTO-SAVE =================
     def _parse_moeda_ui(self, val):
         return nash.limpar_moeda(val)
 
@@ -666,7 +643,6 @@ class NashDataEntryGUI:
         self.salvar_rascunho_auto()
         self.root.destroy()
 
-    # ================= ATUALIZADOR AUTOMÁTICO PADRÃO WINDOWS =================
     def _extrair_tupla_versao(self, v_str):
         nums = [int(x) for x in re.findall(r"\d+", str(v_str))]
         return tuple(nums) if nums else (0, 0, 0)
@@ -680,7 +656,7 @@ class NashDataEntryGUI:
                     dados = json.loads(resp.read().decode("utf-8"))
 
                 tag_remota = dados.get("tag_name", "")
-                versao_local = getattr(nash, "__version__", "4.1.3")
+                versao_local = getattr(nash, "__version__", "4.1.4")
                 if self._extrair_tupla_versao(tag_remota) > self._extrair_tupla_versao(versao_local):
                     url_exe = None
                     for asset in dados.get("assets", []):
@@ -748,7 +724,6 @@ class NashDataEntryGUI:
 
         threading.Thread(target=_download, daemon=True).start()
 
-    # ================= DASHBOARD E TABELAS =================
     def atualizar_dashboard(self):
         total_pedido = 0.0
         for item in self.tree_danos.get_children():
@@ -831,7 +806,6 @@ class NashDataEntryGUI:
         if incluidos:
             messagebox.showinfo("Colagem Concluída", f"{incluidos} linha(s) colada(s) com sucesso!")
 
-    # ================= LÓGICA DE POPUPS UNIFICADA =================
     def popup_generico(self, tipo_tree, item_selecionado=None):
         popup = tk.Toplevel(self.root)
         popup.transient(self.root)
@@ -916,7 +890,6 @@ class NashDataEntryGUI:
             tree.delete(item)
         self._ao_modificar_dados()
 
-    # ================= EXPORTAÇÃO E IMPORTAÇÃO DE TEMPLATES =================
     def _carregar_workbook_na_tela(self, caminho, silencioso=False):
         wb = load_workbook(caminho, data_only=True)
 
@@ -983,7 +956,6 @@ class NashDataEntryGUI:
             messagebox.showerror("Erro ao Importar", f"Ocorreu um erro ao tentar ler a planilha:\n{str(e)}")
 
     def calcular_direto_planilha(self):
-        """Permite escolher um arquivo template.xlsx editado no Excel e gerar o Laudo + PDF direto."""
         caminho_in = filedialog.askopenfilename(title="Selecione o Template preenchido no Excel", filetypes=[("Planilha Excel", "*.xlsx")])
         if not caminho_in:
             return
