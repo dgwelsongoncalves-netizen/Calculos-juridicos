@@ -10,7 +10,7 @@ import subprocess
 import re
 from pathlib import Path
 
-__version__ = "4.1.4"  # Sincronizacao automatica da Tabela TJMG via GitHub e pasta de usuario livre de UAC
+__version__ = "4.1."  # Sincronizacao automatica da Tabela TJMG via GitHub e pasta de usuario livre de UAC
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -1359,7 +1359,7 @@ def gerar_relatorio_exito_cliente(processo, df_exito, arquivo_saida_base):
         pasta, nome_raiz, ext, contador = path_final.parent, path_final.stem, path_final.suffix, 1
         while True:
             novo_caminho = pasta / f"{nome_raiz} ({contador}){ext}"
-            if not novo_cansiho := novo_caminho.exists(): path_final = novo_caminho; break
+            if not novo_caminho.exists(): path_final = novo_caminho; break
             contador += 1
             
     wb.save(str(path_final))

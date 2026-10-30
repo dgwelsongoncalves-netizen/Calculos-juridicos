@@ -27,9 +27,14 @@ jobs:
           pip install pyinstaller
           pip install -r requirements.txt
 
+      - name: Validar sintaxe e importacao do nash.py antes de empacotar
+        run: |
+          python -m py_compile nash.py interface_v3.py
+          python -c "import nash; print('Nash importado com sucesso! Versao:', nash.__version__)"
+
       - name: Fabricar o aplicativo Windows (OneFile)
         run: |
-          pyinstaller --noconfirm --windowed --onefile --name "nash" --icon=dr_nash.ico --add-data "dr_nash.ico;." interface_v3.py
+          pyinstaller --noconfirm --windowed --onefile --name "nash" --icon=dr_nash.ico --add-data "dr_nash.ico;." --add-data "nash.py;." --hidden-import=nash --hidden-import=pandas --hidden-import=openpyxl --hidden-import=bcb interface_v3.py
 
       - name: Compilar o Instalador (Inno Setup)
         run: iscc gerador_nash.iss
@@ -42,7 +47,7 @@ jobs:
           if ($content -match '__version__\s*=\s*["\x27]([^"\x27]+)["\x27]') {
             $ver = $matches[1]
           } else {
-            $ver = "4.1.3"
+            $ver = "4.1.5"
           }
           Write-Output "versao=$ver" >> $env:GITHUB_OUTPUT
           Write-Output "Versao detectada: $ver"
@@ -53,6 +58,6 @@ jobs:
           files: Instalador_Final/Instalador_Nash_System.exe
           tag_name: v${{ steps.get_version.outputs.versao }}
           name: Nash System v${{ steps.get_version.outputs.versao }}
-          body: "Atualizacao automatica gerada pelo GitHub Actions com suporte a interface guiada e auto-save."
+          body: "Instalador oficial com modulo nash embutido, interface guiada, auto-save e sincronizacao da Tabela TJMG."
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
