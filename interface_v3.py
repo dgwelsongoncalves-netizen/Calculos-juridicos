@@ -644,7 +644,7 @@ class NashDataEntryGUI:
         self.root.destroy()
 
     def _extrair_tupla_versao(self, v_str):
-        nums = [int(x) for x in re.findall(r"\d+", str(v_str))]
+        nums = [int(x) for x in re.findall(r"\d+", str(v_str))][3]
         return tuple(nums) if nums else (0, 0, 0)
 
     def verificar_atualizacao_background(self, silencioso=True):
@@ -656,7 +656,7 @@ class NashDataEntryGUI:
                     dados = json.loads(resp.read().decode("utf-8"))
 
                 tag_remota = dados.get("tag_name", "")
-                versao_local = getattr(nash, "__version__", "4.1.4")
+                versao_local = getattr(nash, "__version__", "4.1.5")
                 if self._extrair_tupla_versao(tag_remota) > self._extrair_tupla_versao(versao_local):
                     url_exe = None
                     for asset in dados.get("assets", []):

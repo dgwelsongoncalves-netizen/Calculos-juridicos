@@ -1,6 +1,6 @@
 [Setup]
 AppName=Nash System
-AppVersion=2.8.19
+AppVersion=4.1.5
 DefaultDirName={autopf}\Nash System
 DefaultGroupName=Nash System
 OutputDir=.\Instalador_Final
@@ -10,6 +10,8 @@ UninstallDisplayIcon={app}\nash.exe
 Compression=lzma
 SolidCompression=yes
 PrivilegesRequired=lowest
+CloseApplications=yes
+RestartApplications=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "Criar atalho na Area de Trabalho"; GroupDescription: "Atalhos adicionais:"

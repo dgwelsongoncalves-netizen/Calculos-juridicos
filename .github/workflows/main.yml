@@ -27,6 +27,10 @@ jobs:
           pip install pyinstaller
           pip install -r requirements.txt
 
+      - name: Validar sintaxe do Python antes de compilar
+        run: |
+          python -m py_compile nash.py interface_v3.py
+
       - name: Fabricar o aplicativo Windows (OneFile)
         run: |
           pyinstaller --noconfirm --windowed --onefile --name "nash" --icon=dr_nash.ico --add-data "dr_nash.ico;." interface_v3.py
@@ -34,39 +38,38 @@ jobs:
       - name: Compilar o Instalador (Inno Setup)
         run: iscc gerador_nash.iss
 
-      - name: Organizar executavel para upload
+      - name: Verificar se o Instalador do Inno Setup foi gerado
+        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "dist_instalador"
-          $exe = Get-ChildItem -Recurse -Filter "*.exe" | Where-Object { $_.FullName -notmatch "pyinstaller" } | Select-Object -First 1
-          if ($exe) {
-            Copy-Item $exe.FullName -Destination "dist_instalador/Instalador_Nash_System.exe"
-            Write-Host "Instalador encontrado e copiado de: $($exe.FullName)"
-          } else {
-            Write-Error "Instalador .exe nao encontrado pelo script!"
+          if (-Not (Test-Path "Instalador_Final/Instalador_Nash_System.exe")) {
+            Write-Error "O Inno Setup nao gerou o arquivo Instalador_Final/Instalador_Nash_System.exe!"
             exit 1
           }
+          $item = Get-Item "Instalador_Final/Instalador_Nash_System.exe"
+          Write-Host "Instalador Inno Setup validado com sucesso: $($item.FullName) ($($item.Length) bytes)"
 
-      - name: Extrair versao do Nash e criar Tag Unica
+      - name: Extrair versao do Nash para Tag Limpa
         id: get_version
         shell: pwsh
         run: |
           $content = Get-Content -Path "nash.py" -Raw -Encoding UTF8
           if ($content -match '__version__\s*=\s*["\x27]([^"\x27]+)["\x27]') {
-            $ver = $matches[1]
+            $ver = $matches[1].Trim()
           } else {
             $ver = "4.1.5"
           }
-          # Adiciona timestamp para garantir que a tag nunca duplique no GitHub e evite "Too many retries"
-          $tag = "v$ver-" + (Get-Date -Format "yyyyMMdd-HHmmss")
-          Write-Output "tag=$tag" >> $env:GITHUB_OUTPUT
-          Write-Output "Tag gerada: $tag"
+          Write-Output "tag=v$ver" >> $env:GITHUB_OUTPUT
+          Write-Output "versao=$ver" >> $env:GITHUB_OUTPUT
+          Write-Output "Tag limpa gerada: v$ver"
 
       - name: Publicar Release e Instalador no GitHub
         uses: softprops/action-gh-release@v2
         with:
-          files: dist_instalador/Instalador_Nash_System.exe
+          files: Instalador_Final/Instalador_Nash_System.exe
           tag_name: ${{ steps.get_version.outputs.tag }}
-          name: Nash System Release (${{ steps.get_version.outputs.tag }})
-          body: "Instalador oficial gerado automaticamente pelo GitHub Actions."
+          name: Nash System v${{ steps.get_version.outputs.versao }}
+          body: "Instalador oficial Inno Setup do Nash System v${{ steps.get_version.outputs.versao }}."
+          overwrite_files: true
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

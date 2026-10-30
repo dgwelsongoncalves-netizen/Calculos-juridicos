@@ -10,7 +10,7 @@ import subprocess
 import re
 from pathlib import Path
 
-__version__ = "4.1."  # Sincronizacao automatica da Tabela TJMG via GitHub e pasta de usuario livre de UAC
+__version__ = "4.1.5"  # Sincronizacao automatica da Tabela TJMG via GitHub e pasta de usuario livre de UAC
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
