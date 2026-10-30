@@ -34,11 +34,19 @@ jobs:
       - name: Compilar o Instalador (Inno Setup)
         run: iscc gerador_nash.iss
 
-      - name: Listar arquivos gerados para debug
+      - name: Organizar executavel para upload
         run: |
-          Get-ChildItem -Recurse -Filter "*.exe"
+          New-Item -ItemType Directory -Force -Path "dist_instalador"
+          $exe = Get-ChildItem -Recurse -Filter "*.exe" | Where-Object { $_.FullName -notmatch "pyinstaller" } | Select-Object -First 1
+          if ($exe) {
+            Copy-Item $exe.FullName -Destination "dist_instalador/Instalador_Nash_System.exe"
+            Write-Host "Instalador encontrado e copiado de: $($exe.FullName)"
+          } else {
+            Write-Error "Instalador .exe nao encontrado pelo script!"
+            exit 1
+          }
 
-      - name: Extrair versao do Nash para Tag
+      - name: Extrair versao do Nash e criar Tag Unica
         id: get_version
         shell: pwsh
         run: |
@@ -48,18 +56,17 @@ jobs:
           } else {
             $ver = "4.1.5"
           }
-          Write-Output "versao=$ver" >> $env:GITHUB_OUTPUT
-          Write-Output "Versao detectada: $ver"
+          # Adiciona timestamp para garantir que a tag nunca duplique no GitHub e evite "Too many retries"
+          $tag = "v$ver-" + (Get-Date -Format "yyyyMMdd-HHmmss")
+          Write-Output "tag=$tag" >> $env:GITHUB_OUTPUT
+          Write-Output "Tag gerada: $tag"
 
       - name: Publicar Release e Instalador no GitHub
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            Instalador_Final/*.exe
-            Output/*.exe
-          tag_name: v${{ steps.get_version.outputs.versao }}
-          name: Nash System v${{ steps.get_version.outputs.versao }}
-          body: "Instalador oficial atualizado do Nash System."
-          fail_on_unmatched_files: false
+          files: dist_instalador/Instalador_Nash_System.exe
+          tag_name: ${{ steps.get_version.outputs.tag }}
+          name: Nash System Release (${{ steps.get_version.outputs.tag }})
+          body: "Instalador oficial gerado automaticamente pelo GitHub Actions."
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
