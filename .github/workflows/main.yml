@@ -34,6 +34,10 @@ jobs:
       - name: Compilar o Instalador (Inno Setup)
         run: iscc gerador_nash.iss
 
+      - name: Listar arquivos gerados para debug
+        run: |
+          Get-ChildItem -Recurse -Filter "*.exe"
+
       - name: Extrair versao do Nash para Tag
         id: get_version
         shell: pwsh
@@ -50,9 +54,12 @@ jobs:
       - name: Publicar Release e Instalador no GitHub
         uses: softprops/action-gh-release@v2
         with:
-          files: Instalador_Final/Instalador_Nash_System.exe
+          files: |
+            Instalador_Final/*.exe
+            Output/*.exe
           tag_name: v${{ steps.get_version.outputs.versao }}
           name: Nash System v${{ steps.get_version.outputs.versao }}
-          body: "Atualizacao automatica gerada pelo GitHub Actions."
+          body: "Instalador oficial atualizado do Nash System."
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
