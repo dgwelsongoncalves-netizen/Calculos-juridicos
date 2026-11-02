@@ -1069,40 +1069,69 @@ class NashDataEntryGUI:
             messagebox.showerror("Erro ao Salvar Template", str(e))
 
     def registrar_calculo_analytics(self):
-    try:
-        pasta_analytics = os.path.join(os.path.expanduser("~"), ".nash_analytics")
-        os.makedirs(pasta_analytics, exist_ok=True)
-        agora = datetime.now()
-        usuario = getpass.getuser()
-        
-        total_c = sum(self._parse_moeda_ui(self.tree_custas.item(i, 'values')[3]) for i in self.tree_custas.get_children() if len(self.tree_custas.item(i, 'values')) > 3) if hasattr(self, 'tree_custas') else 0.0
-        
-        modo = self.modo_calculo.get()
-        if modo == "QUEBRA_ACORDO":
-            val_conf = self.vars_acordo.get("Valor Original Confessado (Sem Desconto)", tk.StringVar()).get()
-            total_d = self._parse_moeda_ui(val_conf)
-        else:
-            total_d = sum(self._parse_moeda_ui(self.tree_danos.item(i, 'values')[3]) for i in self.tree_danos.get_children() if len(self.tree_danos.item(i, 'values')) > 3) if hasattr(self, 'tree_danos') else 0.0
+        try:
+            pasta_analytics = os.path.join(os.path.expanduser("~"), ".nash_analytics")
+            os.makedirs(pasta_analytics, exist_ok=True)
+            agora = datetime.now()
+            usuario = getpass.getuser()
+            
+            total_c = sum(self._parse_moeda_ui(self.tree_custas.item(i, 'values')[3]) for i in self.tree_custas.get_children() if len(self.tree_custas.item(i, 'values')) > 3) if hasattr(self, 'tree_custas') else 0.0
+            
+            modo = self.modo_calculo.get()
+            if modo == "QUEBRA_ACORDO":
+                val_conf = self.vars_acordo.get("Valor Original Confessado (Sem Desconto)", tk.StringVar()).get()
+                total_d = self._parse_moeda_ui(val_conf)
+            else:
+                total_d = sum(self._parse_moeda_ui(self.tree_danos.item(i, 'values')[3]) for i in self.tree_danos.get_children() if len(self.tree_danos.item(i, 'values')) > 3) if hasattr(self, 'tree_danos') else 0.0
 
-        dados = {
-            "data_hora": agora.strftime("%Y-%m-%d %H:%M:%S"),
-            "usuario_maquina": usuario,
-            "processo": self.vars_param.get("Processo", tk.StringVar()).get(),
-            "cliente": self.vars_param.get("Nome do Cliente", tk.StringVar()).get(),
-            "adversa": self.vars_param.get("Parte Adversa", tk.StringVar()).get(),
-            "tipo_acao": modo,
-            "base_honorarios": self.vars_param.get("Base Honorários", tk.StringVar()).get(),
-            "percentual_honorarios": self.vars_param.get("Honorários Sucumbência (%)", tk.StringVar()).get(),
-            "total_custas": total_c,
-            "total_creditos": total_d
-        }
-        nome_arquivo = f"calc_{usuario}_{agora.strftime('%Y%m%d_%H%M%S')}.json"
-        caminho_arquivo = os.path.join(pasta_analytics, nome_arquivo)
-        with open(caminho_arquivo, "w", encoding="utf-8") as f:
-            json.dump(dados, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        print(f"Erro no analytics: {e}")
-        pass
+            dados = {
+                "data_hora": agora.strftime("%Y-%m-%d %H:%M:%S"),
+                "usuario_maquina": usuario,
+                "processo": self.vars_param.get("Processo", tk.StringVar()).get(),
+                "cliente": self.vars_param.get("Nome do Cliente", tk.StringVar()).get(),
+                "adversa": self.vars_param.get("Parte Adversa", tk.StringVar()).get(),
+                "tipo_acao": modo,
+                "base_honorarios": self.vars_param.get("Base Honorários", tk.StringVar()).get(),
+                "percentual_honorarios": self.vars_param.get("Honorários Sucumbência (%)", tk.StringVar()).get(),
+                "total_custas": total_c,
+                "total_creditos": total_d
+            }
+            nome_arquivo = f"calc_{usuario}_{agora.strftime('%Y%m%d_%H%M%S')}.json"
+            caminho_arquivo = os.path.join(pasta_analytics, nome_arquivo)
+            with open(caminho_arquivo, "w", encoding="utf-8") as f:
+                json.dump(dados, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"Erro no analytics: {e}")
+            pass
+
+    def salvar_e_gerar(self):
+        self.registrar_calculo_analytics()
+        
+        try:
+            processo_bruto = self.vars_param["Processo"].get().strip() or "sem_numero"
+            processo_seguro = "".join(c for c in processo_bruto if c not in r'\/:*?"<>|')
+            data_atual = datetime.now().strftime("%d.%m.%Y")
+
+            caminho_destino = filedialog.asksaveasfilename(
+                title="Salvar Laudo de Liquidação",
+                defaultextension=".xlsx",
+                initialfile=f"laudo {processo_seguro} {data_atual}.xlsx",
+                filetypes=[("Planilha Excel", "*.xlsx"), ("Todos os arquivos", "*.*")]
+            )
+            if not caminho_destino:
+                return
+
+            path_destino = Path(caminho_destino)
+            pasta_destino = path_destino.parent
+            nome_base = path_destino.stem
+            nome_template = pasta_destino / f"template {processo_seguro} {data_atual}.xlsx"
+            nome_laudo_xls = pasta_destino / f"{nome_base}.xlsx"
+
+            self._gravar_workbook_template(nome_template)
+            self._disparar_thread_motor(nome_template, nome_laudo_xls)
+
+        except Exception as e:
+            messagebox.showerror("Erro Crítico", f"Falha ao preparar o Excel:\n{str(e)}")
 
     def _disparar_thread_motor(self, nome_template, nome_laudo_xls):
         self.btn_processar.config(state="disabled")
