@@ -35,4 +35,8 @@ relatorios_auditoria/
 
 # Ignora quaisquer laudos gerados na raiz ou subpastas
 laudo*
-Relatorio_Exito*
+Relatorio_Exito**.json
+
+*.json
+*.xlsx
+*.pdf

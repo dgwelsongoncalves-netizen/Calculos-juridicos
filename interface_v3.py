@@ -22,10 +22,14 @@ ARQUIVO_RASCUNHO = Path.home() / ".nash_rascunho_auto.xlsx"
 class NashDataEntryGUI:
     def __init__(self, root):
         self.root = root
-        versao_atual = getattr(nash, "__version__", "4.1.4")
+        versao_atual = getattr(nash, "__version__", "4.1.6")
         self.root.title(f"Nash System v{versao_atual} — Liquidação Judicial Assistida")
         self.root.geometry("1040x740")
         self.root.minsize(960, 680)
+
+        # Registro dos validadores de digitação (bloqueio de caracteres)
+        self.vcmd_data = (self.root.register(self.validar_data), '%P')
+        self.vcmd_cnj = (self.root.register(self.validar_cnj), '%P')
 
         self.opcoes_regras = [
             "R1 - TJMG + Juros de 1% a.m.",
@@ -48,6 +52,16 @@ class NashDataEntryGUI:
         self.root.after(200, self._tentar_restaurar_rascunho)
         self.root.after(1500, lambda: self.verificar_atualizacao_background(silencioso=True))
         self.root.protocol("WM_DELETE_WINDOW", self.ao_fechar_janela)
+
+    def validar_data(self, P):
+        if not P: return True
+        if len(P) > 10: return False
+        return all(c.isdigit() or c == '/' for c in P)
+
+    def validar_cnj(self, P):
+        if not P: return True
+        if len(P) > 25: return False
+        return all(c.isdigit() or c in '.-' for c in P)
 
     def _montar_layout_principal(self, versao_atual):
         header = tk.Frame(self.root, bg="#1F3864", padx=14, pady=8)
@@ -242,6 +256,12 @@ class NashDataEntryGUI:
                 widget = ttk.Entry(parent, textvariable=var, width=26)
                 if isinstance(default, str) and default:
                     var.set(default)
+                
+                # Injeta a validação nos campos específicos
+                if "Data" in rotulo_amigavel:
+                    widget.config(validate="key", validatecommand=self.vcmd_data)
+                elif "CNJ" in rotulo_amigavel:
+                    widget.config(validate="key", validatecommand=self.vcmd_cnj)
             else:
                 widget = ttk.Combobox(parent, textvariable=var, values=default, state="readonly", width=24)
                 var.set(default[0])
@@ -283,7 +303,7 @@ class NashDataEntryGUI:
 
         self.in_dano_id = ttk.Entry(f_inline, width=16)
         self.in_dano_desc = ttk.Entry(f_inline, width=28)
-        self.in_dano_data = ttk.Entry(f_inline, width=12)
+        self.in_dano_data = ttk.Entry(f_inline, width=12, validate="key", validatecommand=self.vcmd_data)
         self.in_dano_val = ttk.Entry(f_inline, width=13)
         self.in_dano_regra = ttk.Combobox(f_inline, values=self.opcoes_regras, state="readonly", width=26)
         self.in_dano_regra.current(0)
@@ -358,7 +378,7 @@ class NashDataEntryGUI:
 
         self.in_custa_id = ttk.Entry(f_inline, width=22)
         self.in_custa_desc = ttk.Entry(f_inline, width=36)
-        self.in_custa_data = ttk.Entry(f_inline, width=15)
+        self.in_custa_data = ttk.Entry(f_inline, width=15, validate="key", validatecommand=self.vcmd_data)
         self.in_custa_val = ttk.Entry(f_inline, width=15)
 
         campos_c = [
@@ -427,7 +447,7 @@ class NashDataEntryGUI:
         f_inline.pack(fill="x", pady=(0, 8))
 
         self.in_ded_id = ttk.Entry(f_inline, width=35)
-        self.in_ded_data = ttk.Entry(f_inline, width=18)
+        self.in_ded_data = ttk.Entry(f_inline, width=18, validate="key", validatecommand=self.vcmd_data)
         self.in_ded_val = ttk.Entry(f_inline, width=18)
 
         campos_d = [
@@ -509,6 +529,8 @@ class NashDataEntryGUI:
                 widget = ttk.Entry(frame_params, textvariable=var, width=25)
                 if isinstance(default, str) and default:
                     var.set(default)
+                if "Data" in nome:
+                    widget.config(validate="key", validatecommand=self.vcmd_data)
             elif tipo == "Combo":
                 widget = ttk.Combobox(frame_params, textvariable=var, values=default, state="readonly", width=38)
                 widget.current(1)
@@ -661,7 +683,7 @@ class NashDataEntryGUI:
                     dados = json.loads(resp.read().decode("utf-8"))
 
                 tag_remota = dados.get("tag_name", "")
-                versao_local = getattr(nash, "__version__", "4.1.5")
+                versao_local = getattr(nash, "__version__", "4.1.6")
                 if self._extrair_tupla_versao(tag_remota) > self._extrair_tupla_versao(versao_local):
                     url_exe = None
                     for asset in dados.get("assets", []):
@@ -854,6 +876,8 @@ class NashDataEntryGUI:
                 ent = ttk.Entry(popup, width=40)
                 if i < len(valores_atuais) and valores_atuais[i]:
                     ent.insert(0, valores_atuais[i])
+                if "Data" in campo:
+                    ent.config(validate="key", validatecommand=self.vcmd_data)
 
             ent.grid(row=i, column=1, padx=10, pady=5)
             entradas[campo] = ent
