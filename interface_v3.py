@@ -13,6 +13,7 @@ import urllib.request
 from pathlib import Path
 import threading
 import nash
+import getpass
 
 GITHUB_REPO = "dgwelsongoncalves-netizen/Calculos-juridicos"
 ARQUIVO_RASCUNHO = Path.home() / ".nash_rascunho_auto.xlsx"
@@ -144,6 +145,8 @@ class NashDataEntryGUI:
         self.montar_aba_deducoes()
         self.montar_aba_acordos()
         self.montar_aba_dashboard()
+        
+        self.criar_aba_dashboard_restrita()
 
     def montar_aba_parametros(self):
         frame_modo = tk.LabelFrame(
@@ -190,6 +193,8 @@ class NashDataEntryGUI:
 
         campos_esquerda = [
             ("Processo", "Entry", "", "Número CNJ do Processo:"),
+            ("Nome do Cliente", "Entry", "", "Nome do nosso Cliente:"),
+            ("Parte Adversa", "Entry", "", "Nome da Parte Adversa:"),
             ("Atuação", "Combo", ["AUTOR", "RÉU"], "Nossa Atuação no Processo:"),
             ("Termo Inicial Juros", "Combo", ["Desembolso", "Citação", "Evento", "Propositura", "Trânsito em julgado"], "Juros de Mora contam a partir de:"),
             ("Data Propositura", "Entry", "", "Data da Propositura / Distribuição:"),
@@ -621,7 +626,7 @@ class NashDataEntryGUI:
             return
         self.modo_calculo.set("SENTENCA")
         defaults_limpos = {
-            "Processo": "", "Atuação": "AUTOR", "Data do Trânsito": "", "Data da Sentença": "",
+            "Processo": "", "Nome do Cliente": "", "Parte Adversa": "", "Atuação": "AUTOR", "Data do Trânsito": "", "Data da Sentença": "",
             "Termo Inicial Juros": "Desembolso", "Data da Citação": "", "Data do Evento": "",
             "Justiça Gratuita": "Não", "Juros sobre Custas": "Não (Sem Juros)",
             "Pagamento Voluntário 15d": "Não se aplica", "Valor Pagamento Parcial (R$)": "",
@@ -1040,6 +1045,8 @@ class NashDataEntryGUI:
             messagebox.showerror("Erro ao Salvar Template", str(e))
 
     def salvar_e_gerar(self):
+        self.registrar_calculo_analytics()
+        
         try:
             processo_bruto = self.vars_param["Processo"].get().strip() or "sem_numero"
             processo_seguro = "".join(c for c in processo_bruto if c not in r'\/:*?"<>|')
@@ -1095,6 +1102,137 @@ class NashDataEntryGUI:
                 self.root.after(0, falha)
 
         threading.Thread(target=thread_calculo, daemon=True).start()
+
+    def registrar_calculo_analytics(self):
+        try:
+            pasta_analytics = os.path.join(os.path.expanduser("~"), ".nash_analytics")
+            os.makedirs(pasta_analytics, exist_ok=True)
+            agora = datetime.now()
+            usuario = getpass.getuser()
+            
+            total_c = sum(self._parse_moeda_ui(self.tree_custas.item(i, 'values')[3]) for i in self.tree_custas.get_children() if len(self.tree_custas.item(i, 'values')) > 3) if hasattr(self, 'tree_custas') else 0.0
+            total_d = sum(self._parse_moeda_ui(self.tree_danos.item(i, 'values')[3]) for i in self.tree_danos.get_children() if len(self.tree_danos.item(i, 'values')) > 3) if hasattr(self, 'tree_danos') else 0.0
+
+            dados = {
+                "data_hora": agora.strftime("%Y-%m-%d %H:%M:%S"),
+                "usuario_maquina": usuario,
+                "processo": self.vars_param.get("Processo", tk.StringVar()).get(),
+                "cliente": self.vars_param.get("Nome do Cliente", tk.StringVar()).get(),
+                "adversa": self.vars_param.get("Parte Adversa", tk.StringVar()).get(),
+                "tipo_acao": self.modo_calculo.get(),
+                "base_honorarios": self.vars_param.get("Base Honorários", tk.StringVar()).get(),
+                "percentual_honorarios": self.vars_param.get("Honorários Sucumbência (%)", tk.StringVar()).get(),
+                "total_custas": total_c,
+                "total_creditos": total_d
+            }
+            nome_arquivo = f"calc_{usuario}_{agora.strftime('%Y%m%d_%H%M%S')}.json"
+            caminho_arquivo = os.path.join(pasta_analytics, nome_arquivo)
+            with open(caminho_arquivo, "w", encoding="utf-8") as f:
+                json.dump(dados, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"Erro no analytics: {e}")
+            pass
+
+    def criar_aba_dashboard_restrita(self):
+        usuario_atual = getpass.getuser().lower()
+        if usuario_atual not in ["darllen", "seu_usuario_windows"]:
+            return
+
+        self.aba_dashboard_admin = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(self.aba_dashboard_admin, text=" 7. Dashboard (Admin) ")
+
+        frame_topo = tk.Frame(self.aba_dashboard_admin)
+        frame_topo.pack(fill="x", pady=(0, 10))
+        
+        tk.Label(frame_topo, text="📊 Analytics - Visão Geral de Cálculos", font=("Arial", 14, "bold"), fg="#1F3864").pack(side="left")
+        ttk.Button(frame_topo, text="🔄 Atualizar Relatório", command=self.carregar_dados_analytics).pack(side="right")
+
+        self.frame_cards = tk.Frame(self.aba_dashboard_admin)
+        self.frame_cards.pack(fill="x", pady=10)
+        
+        self.lbl_total_creditos = tk.Label(self.frame_cards, text="Créditos a Recuperar\nR$ 0,00", font=("Arial", 12, "bold"), bg="#FEF2F2", fg="#DC2626", padx=20, pady=10, relief="groove")
+        self.lbl_total_creditos.pack(side="left", expand=True, fill="both", padx=5)
+
+        self.lbl_total_custas = tk.Label(self.frame_cards, text="Custas a Recuperar\nR$ 0,00", font=("Arial", 12, "bold"), bg="#EFF6FF", fg="#1D4ED8", padx=20, pady=10, relief="groove")
+        self.lbl_total_custas.pack(side="left", expand=True, fill="both", padx=5)
+        
+        self.lbl_total_processos = tk.Label(self.frame_cards, text="Cálculos Realizados\n0", font=("Arial", 12, "bold"), bg="#F0FDF4", fg="#16A34A", padx=20, pady=10, relief="groove")
+        self.lbl_total_processos.pack(side="left", expand=True, fill="both", padx=5)
+
+        colunas = ("data", "cliente", "processo", "creditos", "custas", "honorarios")
+        self.tree_analytics = ttk.Treeview(self.aba_dashboard_admin, columns=colunas, show="headings", height=15)
+        
+        self.tree_analytics.heading("data", text="Data")
+        self.tree_analytics.heading("cliente", text="Cliente")
+        self.tree_analytics.heading("processo", text="Processo")
+        self.tree_analytics.heading("creditos", text="Créditos (R$)")
+        self.tree_analytics.heading("custas", text="Custas (R$)")
+        self.tree_analytics.heading("honorarios", text="Honorários (%)")
+        
+        self.tree_analytics.column("data", width=90, anchor="center")
+        self.tree_analytics.column("cliente", width=150, anchor="w")
+        self.tree_analytics.column("processo", width=160, anchor="center")
+        self.tree_analytics.column("creditos", width=110, anchor="center")
+        self.tree_analytics.column("custas", width=110, anchor="center")
+        self.tree_analytics.column("honorarios", width=160, anchor="center")
+        
+        scroll = ttk.Scrollbar(self.aba_dashboard_admin, orient="vertical", command=self.tree_analytics.yview)
+        self.tree_analytics.configure(yscrollcommand=scroll.set)
+        
+        self.tree_analytics.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        
+        self.carregar_dados_analytics()
+
+    def carregar_dados_analytics(self):
+        for item in self.tree_analytics.get_children():
+            self.tree_analytics.delete(item)
+            
+        pasta_analytics = os.path.join(os.path.expanduser("~"), ".nash_analytics")
+        if not os.path.exists(pasta_analytics):
+            return
+            
+        total_custas = 0.0
+        total_creditos = 0.0
+        total_calc = 0
+        
+        for arquivo in os.listdir(pasta_analytics):
+            if arquivo.endswith(".json"):
+                caminho = os.path.join(pasta_analytics, arquivo)
+                try:
+                    with open(caminho, "r", encoding="utf-8") as f:
+                        dados = json.load(f)
+                        
+                    custas_val = float(dados.get("total_custas", 0))
+                    creditos_val = float(dados.get("total_creditos", 0))
+                    total_custas += custas_val
+                    total_creditos += creditos_val
+                    total_calc += 1
+                    
+                    custas_str = f"R$ {custas_val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    creditos_str = f"R$ {creditos_val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    hon_str = f"{dados.get('percentual_honorarios', '')}% sobre {dados.get('base_honorarios', '')}"
+                    
+                    data_curta = dados.get("data_hora", "").split(" ")[0]
+                    cliente_nome = dados.get("cliente", "") or "Não informado"
+                    
+                    self.tree_analytics.insert("", "end", values=(
+                        data_curta,
+                        cliente_nome,
+                        dados.get("processo", ""),
+                        creditos_str,
+                        custas_str,
+                        hon_str
+                    ))
+                except Exception as e:
+                    print(f"Erro ao ler {arquivo}: {e}")
+                    
+        str_custas = f"R$ {total_custas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        str_creditos = f"R$ {total_creditos:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        
+        self.lbl_total_custas.config(text=f"Custas a Recuperar\n{str_custas}")
+        self.lbl_total_creditos.config(text=f"Créditos a Recuperar\n{str_creditos}")
+        self.lbl_total_processos.config(text=f"Cálculos Realizados\n{total_calc}")
 
 
 if __name__ == "__main__":
