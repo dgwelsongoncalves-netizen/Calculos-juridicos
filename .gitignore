@@ -38,5 +38,6 @@ laudo*
 Relatorio_Exito**.json
 
 *.json
-*.xlsx
 *.pdf
+*.xlsx
+!template_nash.xlsx
