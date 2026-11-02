@@ -22,12 +22,11 @@ ARQUIVO_RASCUNHO = Path.home() / ".nash_rascunho_auto.xlsx"
 class NashDataEntryGUI:
     def __init__(self, root):
         self.root = root
-        versao_atual = getattr(nash, "__version__", "4.1.6")
+        versao_atual = getattr(nash, "__version__", "4.1.9")
         self.root.title(f"Nash System v{versao_atual} — Liquidação Judicial Assistida")
         self.root.geometry("1040x740")
         self.root.minsize(960, 680)
 
-        # Registro dos validadores de digitação (bloqueio de caracteres)
         self.vcmd_data = (self.root.register(self.validar_data), '%P')
         self.vcmd_cnj = (self.root.register(self.validar_cnj), '%P')
 
@@ -257,7 +256,6 @@ class NashDataEntryGUI:
                 if isinstance(default, str) and default:
                     var.set(default)
                 
-                # Injeta a validação nos campos específicos
                 if "Data" in rotulo_amigavel:
                     widget.config(validate="key", validatecommand=self.vcmd_data)
                 elif "CNJ" in rotulo_amigavel:
@@ -671,7 +669,7 @@ class NashDataEntryGUI:
         self.root.destroy()
 
     def _extrair_tupla_versao(self, v_str):
-        nums = [int(x) for x in re.findall(r"\d+", str(v_str))][3]
+        nums = [int(x) for x in re.findall(r"\d+", str(v_str))][:3]
         return tuple(nums) if nums else (0, 0, 0)
 
     def verificar_atualizacao_background(self, silencioso=True):
@@ -679,11 +677,11 @@ class NashDataEntryGUI:
             try:
                 url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
                 req = urllib.request.Request(url, headers={"User-Agent": "NashSystem-Updater"})
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with urllib.request.urlopen(req, timeout=10) as resp:
                     dados = json.loads(resp.read().decode("utf-8"))
 
                 tag_remota = dados.get("tag_name", "")
-                versao_local = getattr(nash, "__version__", "4.1.6")
+                versao_local = getattr(nash, "__version__", "4.1.9")
                 if self._extrair_tupla_versao(tag_remota) > self._extrair_tupla_versao(versao_local):
                     url_exe = None
                     for asset in dados.get("assets", []):
@@ -698,10 +696,11 @@ class NashDataEntryGUI:
                         f"Você já está utilizando a versão mais recente do Nash System (v{versao_local})."
                     ))
             except Exception as e:
+                erro_str = str(e)
                 if not silencioso:
                     self.root.after(0, lambda: messagebox.showwarning(
                         "Verificação de Atualização",
-                        f"Não foi possível consultar atualizações no momento:\n{e}"
+                        f"Não foi possível consultar atualizações no momento:\n{erro_str}"
                     ))
 
         threading.Thread(target=_worker, daemon=True).start()
@@ -744,9 +743,10 @@ class NashDataEntryGUI:
                 subprocess.Popen([str(destino), "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"])
                 self.root.after(0, self.root.destroy)
             except Exception as e:
+                erro_dl = str(e)
                 self.root.after(0, lambda: [
                     progresso_win.destroy(),
-                    messagebox.showerror("Erro ao Atualizar", f"Falha ao baixar instalador:\n{e}")
+                    messagebox.showerror("Erro ao Atualizar", f"Falha ao baixar instalador:\n{erro_dl}")
                 ])
 
         threading.Thread(target=_download, daemon=True).start()
