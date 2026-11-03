@@ -22,10 +22,10 @@ ARQUIVO_RASCUNHO = Path.home() / ".nash_rascunho_auto.xlsx"
 class NashDataEntryGUI:
     def __init__(self, root):
         self.root = root
-        versao_atual = getattr(nash, "__version__", "4.1.9")
+        versao_atual = getattr(nash, "__version__", "4.2.0")
         self.root.title(f"Nash System v{versao_atual} — Liquidação Judicial Assistida")
-        self.root.geometry("1040x740")
-        self.root.minsize(960, 680)
+        self.root.geometry("1080x750")
+        self.root.minsize(980, 680)
 
         self.vcmd_data = (self.root.register(self.validar_data), '%P')
         self.vcmd_cnj = (self.root.register(self.validar_cnj), '%P')
@@ -38,6 +38,12 @@ class NashDataEntryGUI:
             "R5 - Selic até 08/24; após, Lei 14.905/24 (Tema 1.368 STJ)",
             "R6 - Lei 14.905/24: IPCA + Taxa Legal",
             "R7 - TJMG CM + Taxa Legal Retroativa"
+        ]
+
+        self.opcoes_vencimento_acordo = [
+            "1. Com Vencimento Antecipado (Conta Corrente / Art. 354 CC)",
+            "2. Com Vencimento Antecipado (Abatimento Nominal na Quebra)",
+            "3. Sem Vencimento Antecipado (Cobrar Parcela a Parcela na Aba 2)"
         ]
 
         self.modo_calculo = tk.StringVar(value="SENTENCA")
@@ -53,13 +59,17 @@ class NashDataEntryGUI:
         self.root.protocol("WM_DELETE_WINDOW", self.ao_fechar_janela)
 
     def validar_data(self, P):
-        if not P: return True
-        if len(P) > 10: return False
+        if not P:
+            return True
+        if len(P) > 10:
+            return False
         return all(c.isdigit() or c == '/' for c in P)
 
     def validar_cnj(self, P):
-        if not P: return True
-        if len(P) > 25: return False
+        if not P:
+            return True
+        if len(P) > 25:
+            return False
         return all(c.isdigit() or c in '.-' for c in P)
 
     def _montar_layout_principal(self, versao_atual):
@@ -158,7 +168,7 @@ class NashDataEntryGUI:
         self.montar_aba_deducoes()
         self.montar_aba_acordos()
         self.montar_aba_dashboard()
-        
+
         self.criar_aba_dashboard_restrita()
 
     def montar_aba_parametros(self):
@@ -172,7 +182,7 @@ class NashDataEntryGUI:
         modos = [
             ("SENTENCA", "1. Cumprimento de Sentença (Condenação Judicial)", "Calcula Danos, Custas, Honorários Sucumbenciais e Multa Art. 523."),
             ("EXECUCAO_EXTRA", "2. Execução de Título Extrajudicial (Acordo / Contrato)", "Juros desde o vencimento + Hon. Art. 827 (Bloqueia Sentença/Trânsito/523)."),
-            ("QUEBRA_ACORDO", "3. Quebra de Acordo Homologado (Cláusula Penal)", "Reverte desconto, abate parcelas pagas na Aba 5 e aplica multa contratual.")
+            ("QUEBRA_ACORDO", "3. Quebra de Acordo Homologado (Cláusula Penal)", "Com ou sem vencimento antecipado, abate parcelas na Aba 5, inclui custas da Aba 3 e aplica multa.")
         ]
 
         for idx, (val_modo, titulo, subtitulo) in enumerate(modos):
@@ -236,7 +246,7 @@ class NashDataEntryGUI:
 
         lbl_dica = tk.Label(
             frame_esq,
-            text="💡 Dica: Em 'Desembolso', o Nash usa a data de cada item lançado na Aba 2 (ideal para Notas Fiscais ou Vencimento de Acordo).",
+            text="💡 Dica: Em 'Desembolso', o Nash usa a data de cada item lançado na Aba 2 (ideal para Notas Fiscais ou Parcelas Vencidas).",
             fg="#1D4ED8", font=("Arial", 8, "italic"), wraplength=430, justify="left"
         )
         lbl_dica.grid(row=len(campos_esquerda), column=0, columnspan=2, sticky="w", pady=(8, 0))
@@ -255,7 +265,7 @@ class NashDataEntryGUI:
                 widget = ttk.Entry(parent, textvariable=var, width=26)
                 if isinstance(default, str) and default:
                     var.set(default)
-                
+
                 if "Data" in rotulo_amigavel:
                     widget.config(validate="key", validatecommand=self.vcmd_data)
                 elif "CNJ" in rotulo_amigavel:
@@ -294,7 +304,7 @@ class NashDataEntryGUI:
     def montar_aba_danos(self):
         f_inline = tk.LabelFrame(
             self.tab_danos,
-            text=" ⚡ Inserção Rápida de Dano / Título Principal (Preencha e aperte [Enter] — sem precisar abrir janelas!) ",
+            text=" ⚡ Inserção Rápida de Dano / Parcela Vencida (Preencha e aperte [Enter] — sem precisar abrir janelas!) ",
             font=("Arial", 9, "bold"), fg="#1D4ED8", padx=8, pady=6
         )
         f_inline.pack(fill="x", pady=(0, 8))
@@ -308,7 +318,7 @@ class NashDataEntryGUI:
 
         campos_in = [
             ("ID / Evento:", self.in_dano_id),
-            ("Descrição (Ex: Nota Fiscal / Acordo):", self.in_dano_desc),
+            ("Descrição (Ex: Nota Fiscal / Parcela):", self.in_dano_desc),
             ("Data (DD/MM/AAAA):", self.in_dano_data),
             ("Valor (R$):", self.in_dano_val),
             ("Regra de Correção:", self.in_dano_regra)
@@ -369,7 +379,7 @@ class NashDataEntryGUI:
     def montar_aba_custas(self):
         f_inline = tk.LabelFrame(
             self.tab_custas,
-            text=" ⚡ Inserção Rápida de Custa Processual (Digite e pressione [Enter]) ",
+            text=" ⚡ Inserção Rápida de Custa Processual — Inclusive Custas Pós-Acordo (Digite e pressione [Enter]) ",
             font=("Arial", 9, "bold"), fg="#1D4ED8", padx=8, pady=6
         )
         f_inline.pack(fill="x", pady=(0, 8))
@@ -381,7 +391,7 @@ class NashDataEntryGUI:
 
         campos_c = [
             ("ID / Evento PJe:", self.in_custa_id),
-            ("Descrição da Despesa (Ex: Custas Iniciais / Alvará):", self.in_custa_desc),
+            ("Descrição da Despesa (Ex: Desarquivamento / Intimação Postal):", self.in_custa_desc),
             ("Data Pagamento:", self.in_custa_data),
             ("Valor Pago (R$):", self.in_custa_val)
         ]
@@ -503,41 +513,63 @@ class NashDataEntryGUI:
         self._ao_modificar_dados()
 
     def montar_aba_acordos(self):
-        frame_params = tk.LabelFrame(self.tab_acordos, text=" 📝 Parâmetros da Quebra de Acordo ", font=("Arial", 10, "bold"), padx=10, pady=10)
-        frame_params.pack(fill="x", pady=(0, 10))
+        frame_params = tk.LabelFrame(
+            self.tab_acordos,
+            text=" 📝 Parâmetros da Quebra de Acordo (Com / Sem Vencimento Antecipado e Imputação Art. 354 CC) ",
+            font=("Arial", 10, "bold"), fg="#1F3864", padx=10, pady=8
+        )
+        frame_params.pack(fill="x", pady=(0, 8))
+
+        # Linha 0 dedicada à Modalidade de Vencimento para não cortar o texto na lista
+        var_mod = tk.StringVar()
+        var_mod.trace_add("write", lambda *args: self._ao_modificar_dados())
+        self.vars_acordo["Modalidade de Vencimento"] = var_mod
+        ttk.Label(frame_params, text="Modalidade de Vencimento:").grid(row=0, column=0, sticky="w", padx=8, pady=5)
+        cb_mod = ttk.Combobox(frame_params, textvariable=var_mod, values=self.opcoes_vencimento_acordo, state="readonly", width=64)
+        cb_mod.current(0)
+        cb_mod.grid(row=0, column=1, columnspan=3, sticky="w", padx=8, pady=5)
 
         campos_acordo = [
-            ("Data do Inadimplemento", "Entry", ""),
             ("Regra de Atualização Pós-Quebra", "Combo", self.opcoes_regras),
+            ("Data do Acordo Original", "Entry", ""),
+            ("Data do Inadimplemento", "Entry", ""),
             ("Valor Original Confessado (Sem Desconto)", "Entry", ""),
             ("Valor do Desconto (A Reverter)", "Entry", ""),
-            ("Multa Moratória Contratual (%)", "Entry", "10"),
+            ("Multa Moratória Contratual (%)", "Entry", "20"),
             ("Honorários de Retomada/Execução (%)", "Entry", "20")
         ]
 
-        row = col = 0
+        row = 1
+        col = 0
         for nome, tipo, default in campos_acordo:
             var = tk.StringVar()
             var.trace_add("write", lambda *args: self._ao_modificar_dados())
             self.vars_acordo[nome] = var
             lbl = ttk.Label(frame_params, text=f"{nome}:")
-            lbl.grid(row=row, column=col, sticky="w", padx=10, pady=5)
+            lbl.grid(row=row, column=col, sticky="w", padx=8, pady=4)
 
             if tipo == "Entry":
-                widget = ttk.Entry(frame_params, textvariable=var, width=25)
+                widget = ttk.Entry(frame_params, textvariable=var, width=28)
                 if isinstance(default, str) and default:
                     var.set(default)
                 if "Data" in nome:
                     widget.config(validate="key", validatecommand=self.vcmd_data)
             elif tipo == "Combo":
-                widget = ttk.Combobox(frame_params, textvariable=var, values=default, state="readonly", width=38)
-                widget.current(1)
+                widget = ttk.Combobox(frame_params, textvariable=var, values=default, state="readonly", width=36)
+                widget.current(0)
 
-            widget.grid(row=row, column=col+1, sticky="w", padx=10, pady=5)
+            widget.grid(row=row, column=col+1, sticky="w", padx=8, pady=4)
             col += 2
             if col > 2:
                 col = 0
                 row += 1
+
+        lbl_info_acordo = tk.Label(
+            frame_params,
+            text="💡 Dica: Na opção '1. Com Vencimento Antecipado (Conta Corrente / Art. 354 CC)', informe a Data do Acordo Original para corrigir e aplicar juros mês a mês abatendo cada parcela na data do pagamento. As custas pós-acordo lançadas na Aba 3 serão incluídas automaticamente!",
+            fg="#1D4ED8", font=("Arial", 8, "italic"), wraplength=960, justify="left"
+        )
+        lbl_info_acordo.grid(row=row+1, column=0, columnspan=4, sticky="w", padx=8, pady=(4, 0))
 
         frame_pagas = tk.LabelFrame(self.tab_acordos, text=" 💸 Parcelas Pagas (A Abater do Saldo) ", font=("Arial", 10, "bold"), padx=10, pady=5)
         frame_pagas.pack(fill="both", expand=True)
@@ -547,6 +579,8 @@ class NashDataEntryGUI:
         ttk.Button(frame_botoes_ac, text="➕ Adicionar Parcela Paga", command=lambda: self.popup_generico('acordo_pagas')).pack(side="left", padx=5)
         ttk.Button(frame_botoes_ac, text="✏️ Editar", command=lambda: self.editar_selecionado('acordo_pagas')).pack(side="left", padx=5)
         ttk.Button(frame_botoes_ac, text="🗑️ Remover", command=lambda: self.remover_selecionado('acordo_pagas')).pack(side="left", padx=5)
+        ttk.Button(frame_botoes_ac, text="📋 Colar do Excel", command=lambda: self.colar_do_excel('acordo_pagas')).pack(side="left", padx=5)
+        ttk.Button(frame_botoes_ac, text="🧹 Limpar Aba", command=lambda: self.limpar_tree('acordo_pagas')).pack(side="left", padx=5)
 
         colunas_ac = ('id', 'data_pagamento', 'valor')
         self.tree_acordo_pagas = ttk.Treeview(frame_pagas, columns=colunas_ac, show='headings', height=6)
@@ -555,6 +589,7 @@ class NashDataEntryGUI:
             self.tree_acordo_pagas.heading(col, text=titulo)
             self.tree_acordo_pagas.column(col, width=200, anchor="center")
         self.tree_acordo_pagas.column('id', width=400, anchor="w")
+        self.tree_acordo_pagas.bind("<Double-1>", lambda e: self.editar_selecionado('acordo_pagas'))
 
         scroll_y_ac = ttk.Scrollbar(frame_pagas, orient="vertical", command=self.tree_acordo_pagas.yview)
         self.tree_acordo_pagas.configure(yscrollcommand=scroll_y_ac.set)
@@ -590,21 +625,86 @@ class NashDataEntryGUI:
             self.root.after_cancel(self._timer_resumo)
         self._timer_resumo = self.root.after(250, self.atualizar_resumo_rapido)
 
+    def _calcular_metricas_atuais(self):
+        soma_danos = sum(
+            self._parse_moeda_ui(self.tree_danos.item(i, 'values')[3])
+            for i in self.tree_danos.get_children()
+            if len(self.tree_danos.item(i, 'values')) > 3
+        ) if hasattr(self, 'tree_danos') else 0.0
+
+        soma_custas = sum(
+            self._parse_moeda_ui(self.tree_custas.item(i, 'values')[3])
+            for i in self.tree_custas.get_children()
+            if len(self.tree_custas.item(i, 'values')) > 3
+        ) if hasattr(self, 'tree_custas') else 0.0
+
+        soma_ded = sum(
+            self._parse_moeda_ui(self.tree_deducoes.item(i, 'values')[2])
+            for i in self.tree_deducoes.get_children()
+            if len(self.tree_deducoes.item(i, 'values')) > 2
+        ) if hasattr(self, 'tree_deducoes') else 0.0
+
+        soma_pagas_acordo = sum(
+            self._parse_moeda_ui(self.tree_acordo_pagas.item(i, 'values')[2])
+            for i in self.tree_acordo_pagas.get_children()
+            if len(self.tree_acordo_pagas.item(i, 'values')) > 2
+        ) if hasattr(self, 'tree_acordo_pagas') else 0.0
+
+        modo = self.modo_calculo.get()
+        if modo == "QUEBRA_ACORDO":
+            modalidade_venc = self.vars_acordo.get("Modalidade de Vencimento", tk.StringVar()).get()
+            val_conf = self._parse_moeda_ui(self.vars_acordo.get("Valor Original Confessado (Sem Desconto)", tk.StringVar()).get())
+            multa_pct = self._parse_moeda_ui(self.vars_acordo.get("Multa Moratória Contratual (%)", tk.StringVar()).get())
+            hon_pct = self._parse_moeda_ui(self.vars_acordo.get("Honorários de Retomada/Execução (%)", tk.StringVar()).get())
+
+            if modalidade_venc.startswith("3.") and soma_danos > 0:
+                base_liquida = max(0.0, soma_danos - soma_pagas_acordo)
+            else:
+                base_liquida = max(0.0, val_conf - soma_pagas_acordo) if val_conf > 0 else soma_danos
+
+            credito_principal = round(base_liquida * (1.0 + (multa_pct / 100.0)), 2)
+            honorarios_estimados = round(base_liquida * (hon_pct / 100.0), 2)
+            perc_hon_str = f"{hon_pct:g}%"
+            base_hon_str = "QUEBRA DE ACORDO"
+        else:
+            credito_principal = max(0.0, soma_danos - soma_ded)
+            hon_fixo = self._parse_moeda_ui(self.vars_param.get("Honorários Fixos (R$)", tk.StringVar()).get())
+            hon_pct = self._parse_moeda_ui(self.vars_param.get("Honorários Sucumbência (%)", tk.StringVar()).get())
+            base_hon_str = self.vars_param.get("Base Honorários", tk.StringVar()).get() or "CONDENAÇÃO"
+            val_causa = self._parse_moeda_ui(self.vars_param.get("Valor Causa Original", tk.StringVar()).get())
+
+            if hon_fixo > 0:
+                honorarios_estimados = hon_fixo
+                perc_hon_str = "Fixos"
+            else:
+                base_calc_hon = val_causa if (base_hon_str == "VALOR DA CAUSA" and val_causa > 0) else credito_principal
+                honorarios_estimados = round(base_calc_hon * (hon_pct / 100.0), 2)
+                perc_hon_str = f"{hon_pct:g}%"
+
+        return {
+            "modo": modo,
+            "soma_danos": soma_danos,
+            "soma_custas": soma_custas,
+            "soma_ded": soma_ded,
+            "soma_pagas_acordo": soma_pagas_acordo,
+            "credito_principal": credito_principal,
+            "honorarios_estimados": honorarios_estimados,
+            "perc_hon_str": perc_hon_str,
+            "base_hon_str": base_hon_str
+        }
+
     def atualizar_resumo_rapido(self):
         if not hasattr(self, "tree_danos"):
             return
+
+        m = self._calcular_metricas_atuais()
         qtd_danos = len(self.tree_danos.get_children())
-        soma_danos = sum(self._parse_moeda_ui(self.tree_danos.item(i, 'values')[3]) for i in self.tree_danos.get_children() if len(self.tree_danos.item(i, 'values')) > 3)
-
         qtd_custas = len(self.tree_custas.get_children())
-        soma_custas = sum(self._parse_moeda_ui(self.tree_custas.item(i, 'values')[3]) for i in self.tree_custas.get_children() if len(self.tree_custas.item(i, 'values')) > 3)
-
         qtd_ded = len(self.tree_deducoes.get_children())
-        soma_ded = sum(self._parse_moeda_ui(self.tree_deducoes.item(i, 'values')[2]) for i in self.tree_deducoes.get_children() if len(self.tree_deducoes.item(i, 'values')) > 2)
 
-        self.notebook.tab(self.tab_danos, text=f" 2. Valores / Danos ({qtd_danos} | R$ {soma_danos:,.2f}) ")
-        self.notebook.tab(self.tab_custas, text=f" 3. Custas ({qtd_custas} | R$ {soma_custas:,.2f}) ")
-        self.notebook.tab(self.tab_deducoes, text=f" 4. Bloqueios / Depósitos ({qtd_ded} | R$ {soma_ded:,.2f}) ")
+        self.notebook.tab(self.tab_danos, text=f" 2. Valores / Danos ({qtd_danos} | R$ {m['soma_danos']:,.2f}) ")
+        self.notebook.tab(self.tab_custas, text=f" 3. Custas ({qtd_custas} | R$ {m['soma_custas']:,.2f}) ")
+        self.notebook.tab(self.tab_deducoes, text=f" 4. Bloqueios / Depósitos ({qtd_ded} | R$ {m['soma_ded']:,.2f}) ")
 
         aviso_datas = ""
         dt_prop = self.vars_param.get("Data Propositura", tk.StringVar()).get().strip()
@@ -614,15 +714,23 @@ class NashDataEntryGUI:
                 p_dt = datetime.strptime(dt_prop, "%d/%m/%Y")
                 t_dt = datetime.strptime(dt_tran, "%d/%m/%Y")
                 if t_dt < p_dt:
-                    aviso_datas = "   ⚠️ [Atenção: Data do Trânsito é anterior à Propositura! Se for título extrajudicial, escolha o Modo 2 acima]"
+                    aviso_datas = "   ⚠️ [Atenção: Data do Trânsito é anterior à Propositura!]"
             except Exception:
                 pass
 
-        texto = (
-            f"Dívida Histórica ({qtd_danos} itens): R$ {soma_danos:,.2f}   -->   "
-            f"(+) Custas Históricas ({qtd_custas} guias): R$ {soma_custas:,.2f}   -->   "
-            f"(-) Bloqueios/Depósitos ({qtd_ded} itens): -R$ {soma_ded:,.2f}{aviso_datas}"
-        )
+        if m["modo"] == "QUEBRA_ACORDO":
+            texto = (
+                f"Crédito Base Pendente (Pós-Abatimento + Multa): R$ {m['credito_principal']:,.2f}   -->   "
+                f"(+) Custas Pós-Acordo ({qtd_custas} guias): R$ {m['soma_custas']:,.2f}   -->   "
+                f"(+) Honorários Base: R$ {m['honorarios_estimados']:,.2f}"
+            )
+        else:
+            texto = (
+                f"Dívida Histórica ({qtd_danos} itens): R$ {m['soma_danos']:,.2f}   -->   "
+                f"(+) Custas Históricas ({qtd_custas} guias): R$ {m['soma_custas']:,.2f}   -->   "
+                f"(+) Honorários Base: R$ {m['honorarios_estimados']:,.2f}   -->   "
+                f"(-) Bloqueios/Depósitos: -R$ {m['soma_ded']:,.2f}{aviso_datas}"
+            )
         self.lbl_resumo_valores.config(text=texto, fg="#B45309" if aviso_datas else "#0F172A")
         self.salvar_rascunho_auto()
 
@@ -658,7 +766,14 @@ class NashDataEntryGUI:
             if k in self.vars_param:
                 self.vars_param[k].set(v)
         for k in self.vars_acordo:
-            self.vars_acordo[k].set("10" if "Multa" in k else ("20" if "Honorários" in k else ""))
+            if "Modalidade" in k:
+                self.vars_acordo[k].set(self.opcoes_vencimento_acordo[0])
+            elif "Regra" in k:
+                self.vars_acordo[k].set(self.opcoes_regras[0])
+            elif "Multa" in k or "Honorários" in k:
+                self.vars_acordo[k].set("20")
+            else:
+                self.vars_acordo[k].set("")
         for t in ('danos', 'custas', 'deducoes', 'acordo_pagas'):
             self.limpar_tree(t)
         self.aplicar_modo_calculo()
@@ -681,7 +796,7 @@ class NashDataEntryGUI:
                     dados = json.loads(resp.read().decode("utf-8"))
 
                 tag_remota = dados.get("tag_name", "")
-                versao_local = getattr(nash, "__version__", "4.1.9")
+                versao_local = getattr(nash, "__version__", "4.2.0")
                 if self._extrair_tupla_versao(tag_remota) > self._extrair_tupla_versao(versao_local):
                     url_exe = None
                     for asset in dados.get("assets", []):
@@ -752,20 +867,12 @@ class NashDataEntryGUI:
         threading.Thread(target=_download, daemon=True).start()
 
     def atualizar_dashboard(self):
-        total_pedido = 0.0
-        for item in self.tree_danos.get_children():
-            valores = self.tree_danos.item(item, 'values')
-            str_pedido = valores[6] if len(valores) > 6 and str(valores[6]).strip() else (valores[3] if len(valores) > 3 else "0")
-            total_pedido += self._parse_moeda_ui(str_pedido)
-
-        total_custas = 0.0
-        for item in self.tree_custas.get_children():
-            valores = self.tree_custas.item(item, 'values')
-            str_custas = valores[3] if len(valores) > 3 and str(valores[3]).strip() else "0"
-            total_custas += self._parse_moeda_ui(str_custas)
+        m = self._calcular_metricas_atuais()
+        total_pedido = m["credito_principal"]
+        total_custas = m["soma_custas"]
 
         if total_pedido <= 0:
-            self.lbl_status.config(text="Sem dados de pedido inicial para análise.", fg="gray")
+            self.lbl_status.config(text="Sem dados de crédito/pedido para análise.", fg="gray")
             self.canvas_pizza.delete("all")
             self.lbl_detalhes.config(text="")
             return
@@ -794,9 +901,10 @@ class NashDataEntryGUI:
 
         self.lbl_status.config(text=texto_status, fg=cor_custas)
         texto_detalhes = (
-            f"Valor do Pedido Original: R$ {total_pedido:,.2f}\n"
+            f"Crédito Base Exigível: R$ {total_pedido:,.2f}\n"
             f"Custas Adiantadas: R$ {total_custas:,.2f}\n"
-            f"Comprometimento: {proporcao*100:.2f}%\n\n"
+            f"Honorários Estimados: R$ {m['honorarios_estimados']:,.2f}\n"
+            f"Comprometimento em Custas: {proporcao*100:.2f}%\n\n"
         )
         if jg_ativa:
             texto_detalhes += f"⚠ Oponente ({parte_adversa}) possui Justiça Gratuita.\nMesmo com êxito, o desembolso de custas é um Sunk Cost (irrecuperável)."
@@ -966,9 +1074,21 @@ class NashDataEntryGUI:
                     if isinstance(valor, datetime):
                         valor = valor.strftime("%d/%m/%Y")
                     if chave in self.vars_acordo:
-                        self.vars_acordo[chave].set(str(valor))
+                        val_str = str(valor)
+                        if chave == "Regra de Atualização Pós-Quebra":
+                            for opt in self.opcoes_regras:
+                                if opt.startswith(val_str):
+                                    val_str = opt
+                                    break
+                        self.vars_acordo[chave].set(val_str)
 
         carregar_tree('Acordo_Pagas', self.tree_acordo_pagas, ['Identificação / Parcela', 'Data do Pagamento', 'Valor Pago (R$)'])
+
+        # Auto-detectar se a planilha carregada é de Quebra de Acordo
+        val_conf_carregado = self._parse_moeda_ui(self.vars_acordo.get("Valor Original Confessado (Sem Desconto)", tk.StringVar()).get())
+        if val_conf_carregado > 0 or len(self.tree_acordo_pagas.get_children()) > 0:
+            self.modo_calculo.set("QUEBRA_ACORDO")
+            self.aplicar_modo_calculo()
 
         self.root.after(100, self.atualizar_dashboard)
         self.root.after(100, self.atualizar_resumo_rapido)
@@ -990,6 +1110,7 @@ class NashDataEntryGUI:
             return
         try:
             self._carregar_workbook_na_tela(caminho_in, silencioso=True)
+            self.registrar_calculo_analytics()
             p_in = Path(caminho_in)
             nome_sugerido = p_in.name.replace("template ", "laudo ").replace("Template ", "laudo ")
             if nome_sugerido == p_in.name:
@@ -1025,8 +1146,8 @@ class NashDataEntryGUI:
                 c1.fill = fill_cinza
                 c1.border = borda
                 ws.cell(row=r_idx, column=2, value=val).border = borda
-            ws.column_dimensions['A'].width = 35
-            ws.column_dimensions['B'].width = 30
+            ws.column_dimensions['A'].width = 38
+            ws.column_dimensions['B'].width = 35
 
         def salvar_tree(aba, tree_widget, headers):
             ws = wb.create_sheet(aba)
@@ -1050,6 +1171,7 @@ class NashDataEntryGUI:
         wb.save(caminho_arquivo)
 
     def salvar_apenas_template(self):
+        self.registrar_calculo_analytics()
         processo_bruto = self.vars_param["Processo"].get().strip() or "sem_numero"
         processo_seguro = "".join(c for c in processo_bruto if c not in r'\/:*?"<>|')
         data_atual = datetime.now().strftime("%d.%m.%Y")
@@ -1068,45 +1190,54 @@ class NashDataEntryGUI:
         except Exception as e:
             messagebox.showerror("Erro ao Salvar Template", str(e))
 
-    def registrar_calculo_analytics(self):
+    def registrar_calculo_analytics(self, resultado_motor=None):
         try:
             pasta_analytics = os.path.join(os.path.expanduser("~"), ".nash_analytics")
             os.makedirs(pasta_analytics, exist_ok=True)
             agora = datetime.now()
             usuario = getpass.getuser()
-            
-            total_c = sum(self._parse_moeda_ui(self.tree_custas.item(i, 'values')[3]) for i in self.tree_custas.get_children() if len(self.tree_custas.item(i, 'values')) > 3) if hasattr(self, 'tree_custas') else 0.0
-            
-            modo = self.modo_calculo.get()
-            if modo == "QUEBRA_ACORDO":
-                val_conf = self.vars_acordo.get("Valor Original Confessado (Sem Desconto)", tk.StringVar()).get()
-                total_d = self._parse_moeda_ui(val_conf)
-            else:
-                total_d = sum(self._parse_moeda_ui(self.tree_danos.item(i, 'values')[3]) for i in self.tree_danos.get_children() if len(self.tree_danos.item(i, 'values')) > 3) if hasattr(self, 'tree_danos') else 0.0
+
+            m = self._calcular_metricas_atuais()
+            total_c = m["soma_custas"]
+            total_d = m["credito_principal"]
+            total_h = m["honorarios_estimados"]
+
+            # Se o motor matemático retornou os valores atualizados exatos do laudo final, prioriza-os:
+            if isinstance(resultado_motor, dict):
+                if resultado_motor.get("total_creditos_atualizado") is not None:
+                    total_d = float(resultado_motor["total_creditos_atualizado"])
+                if resultado_motor.get("total_custas_atualizado") is not None:
+                    total_c = float(resultado_motor["total_custas_atualizado"])
+                if resultado_motor.get("total_honorarios_atualizado") is not None:
+                    total_h = float(resultado_motor["total_honorarios_atualizado"])
 
             dados = {
                 "data_hora": agora.strftime("%Y-%m-%d %H:%M:%S"),
                 "usuario_maquina": usuario,
-                "processo": self.vars_param.get("Processo", tk.StringVar()).get(),
-                "cliente": self.vars_param.get("Nome do Cliente", tk.StringVar()).get(),
-                "adversa": self.vars_param.get("Parte Adversa", tk.StringVar()).get(),
-                "tipo_acao": modo,
-                "base_honorarios": self.vars_param.get("Base Honorários", tk.StringVar()).get(),
-                "percentual_honorarios": self.vars_param.get("Honorários Sucumbência (%)", tk.StringVar()).get(),
-                "total_custas": total_c,
-                "total_creditos": total_d
+                "processo": self.vars_param.get("Processo", tk.StringVar()).get().strip(),
+                "cliente": self.vars_param.get("Nome do Cliente", tk.StringVar()).get().strip(),
+                "adversa": self.vars_param.get("Parte Adversa", tk.StringVar()).get().strip(),
+                "tipo_acao": m["modo"],
+                "modalidade_acordo": self.vars_acordo.get("Modalidade de Vencimento", tk.StringVar()).get(),
+                "base_honorarios": m["base_hon_str"],
+                "percentual_honorarios": m["perc_hon_str"],
+                "total_custas": round(total_c, 2),
+                "total_creditos": round(total_d, 2),
+                "total_honorarios": round(total_h, 2)
             }
             nome_arquivo = f"calc_{usuario}_{agora.strftime('%Y%m%d_%H%M%S')}.json"
             caminho_arquivo = os.path.join(pasta_analytics, nome_arquivo)
             with open(caminho_arquivo, "w", encoding="utf-8") as f:
                 json.dump(dados, f, ensure_ascii=False, indent=4)
+
+            if hasattr(self, "tree_analytics"):
+                self.root.after(100, self.carregar_dados_analytics)
         except Exception as e:
             print(f"Erro no analytics: {e}")
-            pass
 
     def salvar_e_gerar(self):
         self.registrar_calculo_analytics()
-        
+
         try:
             processo_bruto = self.vars_param["Processo"].get().strip() or "sem_numero"
             processo_seguro = "".join(c for c in processo_bruto if c not in r'\/:*?"<>|')
@@ -1140,6 +1271,9 @@ class NashDataEntryGUI:
         def thread_calculo():
             try:
                 resultado = nash.executar_nash(str(nome_template), str(nome_laudo_xls))
+                if isinstance(resultado, dict):
+                    self.registrar_calculo_analytics(resultado_motor=resultado)
+
                 def sucesso():
                     msg_base = (
                         f"Processamento finalizado com sucesso!\n\n"
@@ -1163,43 +1297,6 @@ class NashDataEntryGUI:
 
         threading.Thread(target=thread_calculo, daemon=True).start()
 
-    def registrar_calculo_analytics(self):
-        try:
-            pasta_analytics = os.path.join(os.path.expanduser("~"), ".nash_analytics")
-            os.makedirs(pasta_analytics, exist_ok=True)
-            agora = datetime.now()
-            usuario = getpass.getuser()
-            
-            total_c = sum(self._parse_moeda_ui(self.tree_custas.item(i, 'values')[3]) for i in self.tree_custas.get_children() if len(self.tree_custas.item(i, 'values')) > 3) if hasattr(self, 'tree_custas') else 0.0
-            
-            # Se for quebra de acordo, o crédito principal vem da Aba 5 (Valor Original Confessado)
-            modo = self.modo_calculo.get()
-            if modo == "QUEBRA_ACORDO":
-                val_conf = self.vars_acordo.get("Valor Original Confessado (Sem Desconto)", tk.StringVar()).get()
-                total_d = self._parse_moeda_ui(val_conf)
-            else:
-                total_d = sum(self._parse_moeda_ui(self.tree_danos.item(i, 'values')[3]) for i in self.tree_danos.get_children() if len(self.tree_danos.item(i, 'values')) > 3) if hasattr(self, 'tree_danos') else 0.0
-
-            dados = {
-                "data_hora": agora.strftime("%Y-%m-%d %H:%M:%S"),
-                "usuario_maquina": usuario,
-                "processo": self.vars_param.get("Processo", tk.StringVar()).get(),
-                "cliente": self.vars_param.get("Nome do Cliente", tk.StringVar()).get(),
-                "adversa": self.vars_param.get("Parte Adversa", tk.StringVar()).get(),
-                "tipo_acao": modo,
-                "base_honorarios": self.vars_param.get("Base Honorários", tk.StringVar()).get(),
-                "percentual_honorarios": self.vars_param.get("Honorários Sucumbência (%)", tk.StringVar()).get(),
-                "total_custas": total_c,
-                "total_creditos": total_d
-            }
-            nome_arquivo = f"calc_{usuario}_{agora.strftime('%Y%m%d_%H%M%S')}.json"
-            caminho_arquivo = os.path.join(pasta_analytics, nome_arquivo)
-            with open(caminho_arquivo, "w", encoding="utf-8") as f:
-                json.dump(dados, f, ensure_ascii=False, indent=4)
-        except Exception as e:
-            print(f"Erro no analytics: {e}")
-            pass
-
     def criar_aba_dashboard_restrita(self):
         usuario_atual = getpass.getuser().lower()
         if usuario_atual not in ["darllen", "seu_usuario_windows"]:
@@ -1209,96 +1306,154 @@ class NashDataEntryGUI:
         self.notebook.add(self.aba_dashboard_admin, text=" 7. Dashboard (Admin) ")
 
         frame_topo = tk.Frame(self.aba_dashboard_admin)
-        frame_topo.pack(fill="x", pady=(0, 10))
-        
-        tk.Label(frame_topo, text="📊 Analytics - Visão Geral de Cálculos", font=("Arial", 14, "bold"), fg="#1F3864").pack(side="left")
+        frame_topo.pack(fill="x", pady=(0, 8))
+
+        tk.Label(
+            frame_topo,
+            text="📊 Analytics - Visão Geral de Cálculos (Deduplicação Inteligente por Processo CNJ)",
+            font=("Arial", 13, "bold"), fg="#1F3864"
+        ).pack(side="left")
         ttk.Button(frame_topo, text="🔄 Atualizar Relatório", command=self.carregar_dados_analytics).pack(side="right")
 
         self.frame_cards = tk.Frame(self.aba_dashboard_admin)
-        self.frame_cards.pack(fill="x", pady=10)
-        
-        self.lbl_total_creditos = tk.Label(self.frame_cards, text="Créditos a Recuperar\nR$ 0,00", font=("Arial", 12, "bold"), bg="#FEF2F2", fg="#DC2626", padx=20, pady=10, relief="groove")
-        self.lbl_total_creditos.pack(side="left", expand=True, fill="both", padx=5)
+        self.frame_cards.pack(fill="x", pady=8)
 
-        self.lbl_total_custas = tk.Label(self.frame_cards, text="Custas a Recuperar\nR$ 0,00", font=("Arial", 12, "bold"), bg="#EFF6FF", fg="#1D4ED8", padx=20, pady=10, relief="groove")
-        self.lbl_total_custas.pack(side="left", expand=True, fill="both", padx=5)
-        
-        self.lbl_total_processos = tk.Label(self.frame_cards, text="Cálculos Realizados\n0", font=("Arial", 12, "bold"), bg="#F0FDF4", fg="#16A34A", padx=20, pady=10, relief="groove")
-        self.lbl_total_processos.pack(side="left", expand=True, fill="both", padx=5)
+        self.lbl_total_creditos = tk.Label(
+            self.frame_cards, text="Créditos a Recuperar\nR$ 0,00",
+            font=("Arial", 11, "bold"), bg="#FEF2F2", fg="#DC2626", padx=14, pady=10, relief="groove"
+        )
+        self.lbl_total_creditos.pack(side="left", expand=True, fill="both", padx=4)
 
-        colunas = ("data", "cliente", "processo", "creditos", "custas", "honorarios")
-        self.tree_analytics = ttk.Treeview(self.aba_dashboard_admin, columns=colunas, show="headings", height=15)
-        
-        self.tree_analytics.heading("data", text="Data")
+        self.lbl_total_custas = tk.Label(
+            self.frame_cards, text="Custas a Recuperar\nR$ 0,00",
+            font=("Arial", 11, "bold"), bg="#EFF6FF", fg="#1D4ED8", padx=14, pady=10, relief="groove"
+        )
+        self.lbl_total_custas.pack(side="left", expand=True, fill="both", padx=4)
+
+        self.lbl_total_honorarios = tk.Label(
+            self.frame_cards, text="Honorários de Sucumbência a Receber\nR$ 0,00",
+            font=("Arial", 11, "bold"), bg="#FEFCE8", fg="#CA8A04", padx=14, pady=10, relief="groove"
+        )
+        self.lbl_total_honorarios.pack(side="left", expand=True, fill="both", padx=4)
+
+        self.lbl_total_processos = tk.Label(
+            self.frame_cards, text="Cálculos Realizados\n0",
+            font=("Arial", 11, "bold"), bg="#F0FDF4", fg="#16A34A", padx=14, pady=10, relief="groove"
+        )
+        self.lbl_total_processos.pack(side="left", expand=True, fill="both", padx=4)
+
+        colunas = ("data", "usuario", "cliente", "processo", "creditos", "custas", "honorarios")
+        self.tree_analytics = ttk.Treeview(self.aba_dashboard_admin, columns=colunas, show="headings", height=14)
+
+        self.tree_analytics.heading("data", text="Última Data")
+        self.tree_analytics.heading("usuario", text="Usuário")
         self.tree_analytics.heading("cliente", text="Cliente")
-        self.tree_analytics.heading("processo", text="Processo")
+        self.tree_analytics.heading("processo", text="Processo (CNJ)")
         self.tree_analytics.heading("creditos", text="Créditos (R$)")
         self.tree_analytics.heading("custas", text="Custas (R$)")
-        self.tree_analytics.heading("honorarios", text="Honorários (%)")
-        
-        self.tree_analytics.column("data", width=90, anchor="center")
+        self.tree_analytics.heading("honorarios", text="Honorários (R$)")
+
+        self.tree_analytics.column("data", width=95, anchor="center")
+        self.tree_analytics.column("usuario", width=95, anchor="center")
         self.tree_analytics.column("cliente", width=150, anchor="w")
-        self.tree_analytics.column("processo", width=160, anchor="center")
-        self.tree_analytics.column("creditos", width=110, anchor="center")
+        self.tree_analytics.column("processo", width=165, anchor="center")
+        self.tree_analytics.column("creditos", width=120, anchor="center")
         self.tree_analytics.column("custas", width=110, anchor="center")
-        self.tree_analytics.column("honorarios", width=160, anchor="center")
-        
+        self.tree_analytics.column("honorarios", width=175, anchor="center")
+
         scroll = ttk.Scrollbar(self.aba_dashboard_admin, orient="vertical", command=self.tree_analytics.yview)
         self.tree_analytics.configure(yscrollcommand=scroll.set)
-        
+
         self.tree_analytics.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
-        
+
         self.carregar_dados_analytics()
+
+    def _formatar_brl(self, valor):
+        return f"R$ {float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
     def carregar_dados_analytics(self):
         for item in self.tree_analytics.get_children():
             self.tree_analytics.delete(item)
-            
+
         pasta_analytics = os.path.join(os.path.expanduser("~"), ".nash_analytics")
         if not os.path.exists(pasta_analytics):
             return
-            
+
+        # Deduplicação Inteligente por CNJ: mantém apenas o JSON com data_hora mais recente de cada processo
+        processos_unicos = {}
+
+        for arquivo in sorted(os.listdir(pasta_analytics)):
+            if not arquivo.endswith(".json"):
+                continue
+            caminho = os.path.join(pasta_analytics, arquivo)
+            try:
+                with open(caminho, "r", encoding="utf-8") as f:
+                    dados = json.load(f)
+
+                proc_bruto = str(dados.get("processo", "")).strip()
+                proc_limpo = re.sub(r"\D", "", proc_bruto)
+                # Se o processo não tiver número CNJ preenchido, usa o nome do arquivo como chave isolada
+                chave_proc = proc_limpo if proc_limpo else f"sem_cnj_{arquivo}"
+
+                data_hora_str = str(dados.get("data_hora", "1970-01-01 00:00:00"))
+                if chave_proc not in processos_unicos or data_hora_str >= processos_unicos[chave_proc]["data_hora"]:
+                    processos_unicos[chave_proc] = {
+                        "data_hora": data_hora_str,
+                        "dados": dados
+                    }
+            except Exception as e:
+                print(f"Erro ao ler {arquivo}: {e}")
+
         total_custas = 0.0
         total_creditos = 0.0
-        total_calc = 0
-        
-        for arquivo in os.listdir(pasta_analytics):
-            if arquivo.endswith(".json"):
-                caminho = os.path.join(pasta_analytics, arquivo)
-                try:
-                    with open(caminho, "r", encoding="utf-8") as f:
-                        dados = json.load(f)
-                        
-                    custas_val = float(dados.get("total_custas", 0))
-                    creditos_val = float(dados.get("total_creditos", 0))
-                    total_custas += custas_val
-                    total_creditos += creditos_val
-                    total_calc += 1
-                    
-                    custas_str = f"R$ {custas_val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                    creditos_str = f"R$ {creditos_val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                    hon_str = f"{dados.get('percentual_honorarios', '')}% sobre {dados.get('base_honorarios', '')}"
-                    
-                    data_curta = dados.get("data_hora", "").split(" ")[0]
-                    cliente_nome = dados.get("cliente", "") or "Não informado"
-                    
-                    self.tree_analytics.insert("", "end", values=(
-                        data_curta,
-                        cliente_nome,
-                        dados.get("processo", ""),
-                        creditos_str,
-                        custas_str,
-                        hon_str
-                    ))
-                except Exception as e:
-                    print(f"Erro ao ler {arquivo}: {e}")
-                    
-        str_custas = f"R$ {total_custas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        str_creditos = f"R$ {total_creditos:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        
-        self.lbl_total_custas.config(text=f"Custas a Recuperar\n{str_custas}")
-        self.lbl_total_creditos.config(text=f"Créditos a Recuperar\n{str_creditos}")
+        total_honorarios = 0.0
+        total_calc = len(processos_unicos)
+
+        itens_ordenados = sorted(processos_unicos.values(), key=lambda x: x["data_hora"], reverse=True)
+
+        for item_proc in itens_ordenados:
+            dados = item_proc["dados"]
+            custas_val = float(dados.get("total_custas", 0.0) or 0.0)
+            creditos_val = float(dados.get("total_creditos", 0.0) or 0.0)
+
+            # Retrocompatibilidade para JSONs antigos que não tinham o campo numérico total_honorarios
+            if "total_honorarios" in dados and dados.get("total_honorarios") is not None:
+                hon_val = float(dados.get("total_honorarios", 0.0) or 0.0)
+            else:
+                perc_raw = str(dados.get("percentual_honorarios", "0")).replace("%", "").strip()
+                perc_num = self._parse_moeda_ui(perc_raw)
+                hon_val = round(creditos_val * (perc_num / 100.0), 2)
+
+            total_custas += custas_val
+            total_creditos += creditos_val
+            total_honorarios += hon_val
+
+            custas_str = self._formatar_brl(custas_val)
+            creditos_str = self._formatar_brl(creditos_val)
+            perc_txt = str(dados.get("percentual_honorarios", "")).strip()
+            if perc_txt and not perc_txt.endswith("%") and perc_txt != "Fixos":
+                perc_txt += "%"
+            hon_str = f"{self._formatar_brl(hon_val)} ({perc_txt})" if perc_txt else self._formatar_brl(hon_val)
+
+            data_curta = str(dados.get("data_hora", "")).split(" ")[0]
+            usuario_maq = str(dados.get("usuario_maquina", "") or "Local")
+            cliente_nome = str(dados.get("cliente", "") or "Não informado")
+            proc_exibicao = str(dados.get("processo", "") or "Sem número")
+
+            self.tree_analytics.insert("", "end", values=(
+                data_curta,
+                usuario_maq,
+                cliente_nome,
+                proc_exibicao,
+                creditos_str,
+                custas_str,
+                hon_str
+            ))
+
+        self.lbl_total_custas.config(text=f"Custas a Recuperar\n{self._formatar_brl(total_custas)}")
+        self.lbl_total_creditos.config(text=f"Créditos a Recuperar\n{self._formatar_brl(total_creditos)}")
+        self.lbl_total_honorarios.config(text=f"Honorários de Sucumbência a Receber\n{self._formatar_brl(total_honorarios)}")
         self.lbl_total_processos.config(text=f"Cálculos Realizados\n{total_calc}")
 
 

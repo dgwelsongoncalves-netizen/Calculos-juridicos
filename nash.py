@@ -10,7 +10,7 @@ import subprocess
 import re
 from pathlib import Path
 
-__version__ = "4.1.9"  # Sincronizacao automatica da Tabela TJMG via GitHub e pasta de usuario livre de UAC
+__version__ = "4.2.0"  # Conta corrente Art. 354 CC em Quebra de Acordo, Custas Pos-Acordo e Analytics v2
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -401,33 +401,70 @@ def executar_nash(caminho_entrada, arquivo_saida):
     data_calculo = pd.Timestamp.today()
 
     tem_acordo = False
+    df_acordo = pd.DataFrame()
+    modalidade_acordo = ""
     if 'Acordo_Params' in xls.sheet_names:
         df_acordo = pd.read_excel(xls, sheet_name='Acordo_Params', header=None, index_col=0)
+        modalidade_acordo = str(get_param('Modalidade de Vencimento', '1. Com Vencimento Antecipado (Conta Corrente / Art. 354 CC)', df_orig=df_acordo)).strip()
         data_inad = get_param('Data do Inadimplemento', df_orig=df_acordo, is_date=True)
-        if pd.notna(data_inad):
-            tem_acordo = True
+        data_acordo_orig = get_param('Data do Acordo Original', df_orig=df_acordo, is_date=True)
+        val_conf_check = limpar_moeda(get_param('Valor Original Confessado (Sem Desconto)', 0.0, df_orig=df_acordo))
+        # Se for Modalidade 3 (Sem Vencimento Antecipado) e não houver Valor Original Confessado preenchido, usa o módulo padrão da Aba 2
+        if not (modalidade_acordo.startswith("3.") and val_conf_check <= 0):
+            if pd.notna(data_inad) or pd.notna(data_acordo_orig) or val_conf_check > 0:
+                tem_acordo = True
 
     if tem_acordo:
         processo = str(get_param('Processo', 'N/A'))
-        regra_pos = str(get_param('Regra de Atualização Pós-Quebra', 'R2', df_orig=df_acordo)).split(' - ')[0].strip().upper()
+        regra_pos = str(get_param('Regra de Atualização Pós-Quebra', 'R1', df_orig=df_acordo)).split(' - ')[0].strip().upper()
         valor_confessado = limpar_moeda(get_param('Valor Original Confessado (Sem Desconto)', 0.0, df_orig=df_acordo))
-        multa_perc = parse_percent(get_param('Multa Moratória Contratual (%)', 10, df_orig=df_acordo))
+        multa_perc = parse_percent(get_param('Multa Moratória Contratual (%)', 20, df_orig=df_acordo))
         hon_perc = parse_percent(get_param('Honorários de Retomada/Execução (%)', 20, df_orig=df_acordo))
-        
+        prop_custas_ac = parse_percent(get_param('Proporção Custas (%)', 100))
+
         houve_inadimplemento = str(get_param('Pagamento Voluntário 15d', '')).strip().upper() in ['NÃO', 'NAO', 'PARCIAL']
         jg = str(get_param('Justiça Gratuita', '')).strip().upper() == 'SIM'
-        
+
         try:
             df_pagas = pd.read_excel(xls, sheet_name='Acordo_Pagas').dropna(subset=['Valor Pago (R$)'], how='any')
             df_pagas['Valor Pago (R$)'] = df_pagas['Valor Pago (R$)'].apply(limpar_moeda)
             df_pagas['Data do Pagamento'] = pd.to_datetime(df_pagas['Data do Pagamento'], format='mixed', dayfirst=True, errors='coerce')
+            df_pagas = df_pagas[df_pagas['Valor Pago (R$)'] > 0].sort_values('Data do Pagamento', kind='stable')
             total_pago = df_pagas['Valor Pago (R$)'].sum()
-        except:
+        except Exception:
             df_pagas = pd.DataFrame()
             total_pago = 0.0
-            
-        df_bcb = carregar_taxas_bcb(data_inad)
-        
+
+        # Leitura e atualização das Custas Pós-Acordo (Aba 3 - Custas)
+        df_custas_ac = pd.DataFrame()
+        total_custas_ac = 0.0
+        if 'Custas' in xls.sheet_names:
+            try:
+                df_c_raw = pd.read_excel(xls, sheet_name='Custas').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='all')
+                if not df_c_raw.empty:
+                    df_c_raw['Valor Histórico'] = pd.Series([limpar_moeda(x) for x in df_c_raw['Valor Histórico']], index=df_c_raw.index, dtype=float)
+                    df_c_raw['Data Desembolso'] = converter_datas_estrito(df_c_raw['Data Desembolso'], 'Custas', 'Data Desembolso')
+                    df_custas_ac = df_c_raw[(df_c_raw['Data Desembolso'].notna()) & (df_c_raw['Valor Histórico'] > 0)].copy()
+            except Exception as e_cust:
+                logging.warning(f"Aviso ao ler custas na quebra de acordo: {e_cust}")
+
+        # Determinação das datas base do acordo
+        if pd.isna(data_acordo_orig):
+            if not df_pagas.empty and pd.notna(df_pagas['Data do Pagamento'].min()):
+                data_acordo_orig = df_pagas['Data do Pagamento'].min()
+            elif pd.notna(data_inad):
+                data_acordo_orig = data_inad
+            else:
+                data_acordo_orig = data_calculo
+
+        if pd.isna(data_inad):
+            data_inad = data_acordo_orig
+
+        datas_min_list = [d for d in [data_acordo_orig, data_inad] if pd.notna(d)]
+        if not df_custas_ac.empty:
+            datas_min_list.append(df_custas_ac['Data Desembolso'].min())
+        df_bcb = carregar_taxas_bcb(min(datas_min_list) if datas_min_list else data_inad)
+
         def get_fator_acordo(regra_alvo, d_cm, d_jur, d_calc):
             if regra_alvo == 'R1': return calc_tjmg_juros(tabela_tjmg, d_cm, d_jur, d_calc)
             elif regra_alvo == 'R2': return calc_selic_pura(df_bcb, d_cm, d_jur, d_calc)
@@ -436,28 +473,150 @@ def executar_nash(caminho_entrada, arquivo_saida):
             elif regra_alvo == 'R5': return calc_selic_leinova(df_bcb, d_cm, d_jur, d_calc)
             elif regra_alvo == 'R6': return calc_leinova_pura(df_bcb, d_cm, d_jur, d_calc)
             elif regra_alvo == 'R7': return calc_tjmg_taxalegal_retroativa(tabela_tjmg, df_bcb, d_cm, d_jur, d_calc)
-            else: return calc_selic_pura(df_bcb, d_cm, d_jur, d_calc)
-            
-        saldo_devedor_base = max(0, valor_confessado - total_pago)
-        f_cm_ac, f_jur_ac = get_fator_acordo(regra_pos, data_inad, data_inad, data_calculo)
-        
-        saldo_atualizado_princ = saldo_devedor_base * f_cm_ac
-        saldo_atualizado_juros = saldo_atualizado_princ * f_jur_ac
-        subtotal_atualizado = saldo_atualizado_princ + saldo_atualizado_juros
-        
-        valor_multa = subtotal_atualizado * multa_perc
-        base_honorarios = subtotal_atualizado + valor_multa
-        valor_hon = base_honorarios * hon_perc
-        
-        total_acordo_quebrado = base_honorarios + valor_hon
-        
-        multa_523 = total_acordo_quebrado * 0.10 if houve_inadimplemento else 0.0
-        hon_523 = total_acordo_quebrado * 0.10 if (houve_inadimplemento and not jg) else 0.0
-        
-        total_geral = total_acordo_quebrado + multa_523 + hon_523
-        
-        gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_pago, saldo_devedor_base, f_cm_ac, f_jur_ac, saldo_atualizado_princ, saldo_atualizado_juros, subtotal_atualizado, multa_perc, valor_multa, hon_perc, valor_hon, multa_523, hon_523, total_geral, df_pagas, arquivo_saida)
-        return {"proporcao": 0.0, "nivel": "NORMAL", "mensagem": ""}
+            else: return calc_tjmg_juros(tabela_tjmg, d_cm, d_jur, d_calc)
+
+        # Atualiza as custas pós-acordo pela regra do acordo (TJMG sem juros sobre custas, salvo trânsito)
+        if not df_custas_ac.empty:
+            df_custas_ac['Fator CM'] = 1.0
+            df_custas_ac['Exigível'] = 0.0
+            for idx_c, row_c in df_custas_ac.iterrows():
+                d_c = row_c['Data Desembolso']
+                f_cm_c = obter_fator_tjmg(tabela_tjmg, d_c, data_calculo) if regra_pos in ['R1', 'R3', 'R4', 'R7'] else get_fator_acordo(regra_pos, d_c, pd.NaT, data_calculo)[0]
+                val_c_corr = round(float(row_c['Valor Histórico']) * f_cm_c * prop_custas_ac, 2)
+                df_custas_ac.at[idx_c, 'Fator CM'] = f_cm_c
+                df_custas_ac.at[idx_c, 'Exigível'] = 0.0 if jg else val_c_corr
+            total_custas_ac = round(df_custas_ac['Exigível'].sum(), 2)
+
+        evolucao_cc = []
+        usa_conta_corrente = modalidade_acordo.startswith("1.") and not df_pagas.empty
+
+        if usa_conta_corrente:
+            # Evolução Mês a Mês / Evento a Evento (Art. 354 do Código Civil)
+            pagas_agrupadas = df_pagas.groupby('Data do Pagamento', as_index=False).agg({
+                'Valor Pago (R$)': 'sum',
+                'Identificação / Parcela': lambda s: ' + '.join(str(v) for v in s if str(v).strip())
+            }).sort_values('Data do Pagamento')
+
+            data_inicio_cc = min(data_acordo_orig, pagas_agrupadas['Data do Pagamento'].iloc[0])
+            princ_atual = float(valor_confessado)
+            jur_atual = 0.0
+            ult_data = data_inicio_cc
+
+            def _fator_delta_cm(d1, d2):
+                if d2 <= d1:
+                    return 1.0
+                cm1, _ = get_fator_acordo(regra_pos, data_inicio_cc, data_inicio_cc, d1)
+                cm2, _ = get_fator_acordo(regra_pos, data_inicio_cc, data_inicio_cc, d2)
+                return (cm2 / cm1) if cm1 > 0 else 1.0
+
+            def _taxa_juros_periodo(d1, d2):
+                dias = max(0, (d2 - d1).days)
+                if dias <= 0:
+                    return 0, 0.0
+                if regra_pos in ['R1', 'R3', 'R4']:
+                    # Juros moratórios de 1% a.m. simples, pro rata die (1%/30 por dia)
+                    return dias, (0.01 * (dias / 30.0))
+                _, j1 = get_fator_acordo(regra_pos, data_inicio_cc, data_inicio_cc, d1)
+                _, j2 = get_fator_acordo(regra_pos, data_inicio_cc, data_inicio_cc, d2)
+                return dias, max(0.0, j2 - j1)
+
+            for _, r_pag in pagas_agrupadas.iterrows():
+                dt_pag = r_pag['Data do Pagamento']
+                vl_pag = float(r_pag['Valor Pago (R$)'])
+                desc_ev = str(r_pag['Identificação / Parcela'])
+
+                f_delta = _fator_delta_cm(ult_data, dt_pag)
+                princ_corr = round(princ_atual * f_delta, 2)
+                jur_ant_corr = round(jur_atual * f_delta, 2)
+                dias_p, tx_j = _taxa_juros_periodo(ult_data, dt_pag)
+                jur_periodo = round(princ_corr * tx_j, 2)
+                jur_acum = round(jur_ant_corr + jur_periodo, 2)
+
+                imp_juros = round(min(vl_pag, jur_acum), 2)
+                imp_princ = round(vl_pag - imp_juros, 2)
+                princ_pos = round(max(0.0, princ_corr - imp_princ), 2)
+                jur_pos = round(max(0.0, jur_acum - imp_juros), 2)
+
+                evolucao_cc.append({
+                    "data": dt_pag,
+                    "evento": desc_ev,
+                    "princ_corr": princ_corr,
+                    "dias": dias_p,
+                    "juros_acum": jur_acum,
+                    "valor_pago": vl_pag,
+                    "imp_juros": imp_juros,
+                    "imp_princ": imp_princ,
+                    "princ_pos": princ_pos,
+                    "juros_pos": jur_pos
+                })
+                princ_atual = princ_pos
+                jur_atual = jur_pos
+                ult_data = dt_pag
+
+            if data_calculo > ult_data:
+                f_delta = _fator_delta_cm(ult_data, data_calculo)
+                princ_corr = round(princ_atual * f_delta, 2)
+                jur_ant_corr = round(jur_atual * f_delta, 2)
+                dias_p, tx_j = _taxa_juros_periodo(ult_data, data_calculo)
+                jur_periodo = round(princ_corr * tx_j, 2)
+                jur_acum = round(jur_ant_corr + jur_periodo, 2)
+
+                evolucao_cc.append({
+                    "data": data_calculo,
+                    "evento": "Atualização na Data-Base (Sem Pagamento)",
+                    "princ_corr": princ_corr,
+                    "dias": dias_p,
+                    "juros_acum": jur_acum,
+                    "valor_pago": 0.0,
+                    "imp_juros": 0.0,
+                    "imp_princ": 0.0,
+                    "princ_pos": princ_corr,
+                    "juros_pos": jur_acum
+                })
+                princ_atual = princ_corr
+                jur_atual = jur_acum
+
+            saldo_devedor_base = max(0.0, valor_confessado - total_pago)
+            f_cm_ac, _ = get_fator_acordo(regra_pos, data_inicio_cc, data_inicio_cc, data_calculo)
+            saldo_atualizado_princ = princ_atual
+            saldo_atualizado_juros = jur_atual
+            f_jur_ac = (saldo_atualizado_juros / saldo_atualizado_princ) if saldo_atualizado_princ > 0 else 0.0
+            subtotal_atualizado = round(saldo_atualizado_princ + saldo_atualizado_juros, 2)
+        else:
+            # Modalidade 2: Abatimento Nominal na Data do Inadimplemento
+            saldo_devedor_base = max(0.0, valor_confessado - total_pago)
+            f_cm_ac, f_jur_ac = get_fator_acordo(regra_pos, data_inad, data_inad, data_calculo)
+            saldo_atualizado_princ = round(saldo_devedor_base * f_cm_ac, 2)
+            saldo_atualizado_juros = round(saldo_atualizado_princ * f_jur_ac, 2)
+            subtotal_atualizado = round(saldo_atualizado_princ + saldo_atualizado_juros, 2)
+
+        # Multa e Honorários Contratuais calculados sobre o saldo atualizado (sem efeito cascata de um sobre o outro)
+        valor_multa = round(subtotal_atualizado * multa_perc, 2)
+        valor_hon = round(subtotal_atualizado * hon_perc, 2)
+
+        total_acordo_quebrado = round(subtotal_atualizado + valor_multa + valor_hon + total_custas_ac, 2)
+
+        multa_523 = round(total_acordo_quebrado * 0.10, 2) if houve_inadimplemento else 0.0
+        hon_523 = round(total_acordo_quebrado * 0.10, 2) if (houve_inadimplemento and not jg) else 0.0
+
+        total_geral = round(total_acordo_quebrado + multa_523 + hon_523, 2)
+
+        gerar_laudo_acordo(
+            processo, data_inad, regra_pos, valor_confessado, total_pago, saldo_devedor_base,
+            f_cm_ac, f_jur_ac, saldo_atualizado_princ, saldo_atualizado_juros, subtotal_atualizado,
+            multa_perc, valor_multa, hon_perc, valor_hon, multa_523, hon_523, total_geral,
+            df_pagas, arquivo_saida, data_acordo_orig=data_acordo_orig,
+            modalidade_acordo=modalidade_acordo, evolucao_cc=evolucao_cc,
+            df_custas_ac=df_custas_ac, total_custas_ac=total_custas_ac
+        )
+        return {
+            "proporcao": 0.0,
+            "nivel": "NORMAL",
+            "mensagem": "",
+            "total_creditos_atualizado": round(subtotal_atualizado + valor_multa + multa_523, 2),
+            "total_custas_atualizado": round(total_custas_ac, 2),
+            "total_honorarios_atualizado": round(valor_hon + hon_523, 2)
+        }
 
     # --- MÓDULO PADRÃO ---
     processo = str(get_param('Processo', 'N/A'))
@@ -671,6 +830,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
         tem_deducao = not df_deducoes.empty
 
     total_final_processo = 0.0
+    creditos_analytics = 0.0
+    custas_analytics = round(df_custas['Exigível'].sum(), 2) if not df_custas.empty else 0.0
+    honorarios_analytics = 0.0
     
     if not tem_deducao:
         total_princ_danos = sum([r['Valor Atualizado'] / (1 + r['Fator Juros']) for _, r in df_danos.iterrows() if r['Valor Histórico']>0])
@@ -709,6 +871,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
         hon_523 = (base_multa * 0.10) if (houve_inadimplemento and not jg_adversa) else 0.0
         
         total_final_processo = base_multa + valor_multa + hon_523
+        creditos_analytics = round((total_princ_danos + total_juros_danos) + valor_multa, 2)
+        honorarios_analytics = round((hon_exigivel_princ + hon_exigivel_juros) + hon_523, 2)
+
         gerar_laudo_excel(
             processo, teve_transito, jg_adversa, df_danos, df_custas,
             (subtotal_princ + subtotal_juros), (hon_exigivel_princ + hon_exigivel_juros),
@@ -864,6 +1029,9 @@ def executar_nash(caminho_entrada, arquivo_saida):
                 historico_cg.append((data_calculo, "(+) Honorários Art. 523, §2º CPC (10% s/ Saldo Remanescente)", hon_523, 0.0, 0.0, P_tot()+J_tot()))
 
         total_final_processo = P_tot() + J_tot()
+        creditos_analytics = round(max(0.0, total_final_processo - custas_analytics - (hon_suc_princ + hon_suc_jur)), 2)
+        honorarios_analytics = round(hon_suc_princ + hon_suc_jur, 2)
+
         gerar_laudo_excel(
             processo, teve_transito, jg_adversa, df_danos, df_custas,
             0, 0, 0, 0, total_final_processo, arquivo_saida,
@@ -875,7 +1043,14 @@ def executar_nash(caminho_entrada, arquivo_saida):
     if 'AUTOR' not in atuacao and 'Risco Atual' in df_danos.columns and df_danos['Risco Atual'].sum() > 0:
         gerar_relatorio_exito_cliente(processo, df_danos[df_danos['Risco Atual'] > 0], arquivo_saida)
 
-    return {"proporcao": proporcao_custas, "nivel": nivel_alerta_custas, "mensagem": msg_alerta_custas}
+    return {
+        "proporcao": proporcao_custas,
+        "nivel": nivel_alerta_custas,
+        "mensagem": msg_alerta_custas,
+        "total_creditos_atualizado": creditos_analytics,
+        "total_custas_atualizado": custas_analytics,
+        "total_honorarios_atualizado": honorarios_analytics
+    }
 
 # --- 6. GERAÇÃO DE RELATÓRIO ESTRATÉGICO INTERNO ---
 def gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao, nivel, df_danos, df_custas, arquivo_saida_base):
@@ -958,7 +1133,7 @@ def gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao, nivel,
     logging.info(f"Relatório estratégico gerado: {path_final.name}")
 
 # --- 7. GERAÇÃO DE ARQUIVOS PRINCIPAIS ---
-def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_pago, saldo_base, f_cm, f_jur, val_princ, val_juros, subtotal, multa_perc, val_multa, hon_perc, val_hon, multa_523, hon_523, total_geral, df_pagas, arquivo_saida):
+def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_pago, saldo_base, f_cm, f_jur, val_princ, val_juros, subtotal, multa_perc, val_multa, hon_perc, val_hon, multa_523, hon_523, total_geral, df_pagas, arquivo_saida, data_acordo_orig=None, modalidade_acordo="", evolucao_cc=None, df_custas_ac=None, total_custas_ac=0.0):
     wb = Workbook()
     ws = wb.active
     ws.title = "Quebra de Acordo"
@@ -971,21 +1146,45 @@ def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_p
     borda = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     moeda = 'R$ #,##0.00'
 
-    ws.merge_cells('A1:F1'); ws['A1'] = f"LAUDO DE CÁLCULO JUDICIAL - DESCUMPRIMENTO DE ACORDO"
+    ws.merge_cells('A1:G1'); ws['A1'] = "LAUDO DE CÁLCULO JUDICIAL - DESCUMPRIMENTO DE ACORDO"
     ws['A1'].font = f_titulo; ws['A1'].fill = fundo_escuro; ws['A1'].alignment = Alignment(horizontal="center")
-    ws.merge_cells('A2:F2'); ws['A2'] = f"Gerado pelo Nash System v{__version__} em {pd.Timestamp.today().strftime('%d/%m/%Y às %H:%M')}"
+    ws.merge_cells('A2:G2'); ws['A2'] = f"Gerado pelo Nash System v{__version__} em {pd.Timestamp.today().strftime('%d/%m/%Y às %H:%M')}"
     ws['A2'].alignment = Alignment(horizontal="right"); ws['A2'].font = Font(name="Arial", size=9, italic=True)
 
     ws['A4'] = "Processo:"; ws['B4'] = processo
-    ws['A5'] = "Data do Inadimplemento:"; ws['B5'] = data_inad.strftime('%d/%m/%Y')
-    ws['A6'] = "Regra Pós-Quebra:"; ws['B6'] = regra_pos
-    for r in range(4, 7): ws.cell(row=r, column=1).font = f_negrito
+    ws['A5'] = "Data do Acordo Original:"; ws['B5'] = data_acordo_orig.strftime('%d/%m/%Y') if pd.notna(data_acordo_orig) else "-"
+    ws['A6'] = "Data do Inadimplemento:"; ws['B6'] = data_inad.strftime('%d/%m/%Y') if pd.notna(data_inad) else "-"
+    ws['D4'] = "Regra Pós-Quebra:"; ws['E4'] = regra_pos
+    ws['D5'] = "Sistemática:"; ws['E5'] = modalidade_acordo if modalidade_acordo else "Vencimento Antecipado"
+    for r in range(4, 7):
+        ws.cell(row=r, column=1).font = f_negrito
+        ws.cell(row=r, column=4).font = f_negrito
 
     linha = 8
-    if not df_pagas.empty:
-        ws.merge_cells(f'A{linha}:F{linha}'); ws[f'A{linha}'] = "1. HISTÓRICO DE PARCELAS PAGAS (AMORTIZAÇÃO)"
+    if evolucao_cc:
+        ws.merge_cells(f'A{linha}:G{linha}'); ws[f'A{linha}'] = "1. EVOLUÇÃO DO SALDO E IMPUTAÇÃO DOS PAGAMENTOS (ART. 354 DO CÓDIGO CIVIL)"
         ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
-        cabs_p = ['ID / Parcela', 'Data Pagamento', 'Valor Pago (R$)', '', '', '']
+        cabs_cc = ['Data', 'Evento / Parcela', 'Principal Corrigido', 'Juros Acumulados', 'Valor Pago (R$)', 'Principal Após Pgto', 'Juros Após Pgto']
+        for i, t in enumerate(cabs_cc, 1):
+            ws.cell(row=linha, column=i, value=t).font = f_negrito
+            ws.cell(row=linha, column=i).border = borda
+            ws.cell(row=linha, column=i).fill = fundo_cinza
+            ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        linha += 1
+        for ev in evolucao_cc:
+            ws.cell(row=linha, column=1, value=ev['data'].strftime('%d/%m/%Y')).border = borda
+            ws.cell(row=linha, column=2, value=ev['evento']).border = borda
+            ws.cell(row=linha, column=3, value=ev['princ_corr']).number_format = moeda; ws.cell(row=linha, column=3).border = borda
+            ws.cell(row=linha, column=4, value=ev['juros_acum']).number_format = moeda; ws.cell(row=linha, column=4).border = borda
+            ws.cell(row=linha, column=5, value=ev['valor_pago']).number_format = moeda; ws.cell(row=linha, column=5).border = borda
+            ws.cell(row=linha, column=6, value=ev['princ_pos']).number_format = moeda; ws.cell(row=linha, column=6).border = borda
+            ws.cell(row=linha, column=7, value=ev['juros_pos']).number_format = moeda; ws.cell(row=linha, column=7).border = borda
+            linha += 1
+        linha += 1
+    elif not df_pagas.empty:
+        ws.merge_cells(f'A{linha}:G{linha}'); ws[f'A{linha}'] = "1. HISTÓRICO DE PARCELAS PAGAS (AMORTIZAÇÃO)"
+        ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
+        cabs_p = ['ID / Parcela', 'Data Pagamento', 'Valor Pago (R$)', '', '', '', '']
         for i, t in enumerate(cabs_p, 1): 
             ws.cell(row=linha, column=i, value=t).font = f_negrito
             if t != '': ws.cell(row=linha, column=i).border = borda
@@ -993,49 +1192,74 @@ def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_p
         linha += 1
         for _, r in df_pagas.iterrows():
             ws.cell(row=linha, column=1, value=r['Identificação / Parcela']).border = borda
-            ws.cell(row=linha, column=2, value=r['Data do Pagamento'].strftime('%d/%m/%Y')).border = borda
+            ws.cell(row=linha, column=2, value=r['Data do Pagamento'].strftime('%d/%m/%Y') if pd.notna(r['Data do Pagamento']) else "-").border = borda
             ws.cell(row=linha, column=3, value=r['Valor Pago (R$)']).number_format = moeda; ws.cell(row=linha, column=3).border = borda
             linha += 1
         linha += 1
 
-    ws.merge_cells(f'A{linha}:F{linha}'); ws[f'A{linha}'] = "2. APURAÇÃO E ATUALIZAÇÃO DO SALDO DEVEDOR"
+    if df_custas_ac is not None and not df_custas_ac.empty:
+        ws.merge_cells(f'A{linha}:G{linha}'); ws[f'A{linha}'] = "2. CUSTAS E DESPESAS PROCESSUAIS PÓS-ACORDO"
+        ws[f'A{linha}'].font = f_negrito; ws[f'A{linha}'].fill = fundo_cinza; linha += 1
+        cabs_c = ['ID / Folha', 'Descrição da Despesa', 'Data Pagamento', 'Valor Histórico', 'Fator TJMG/CM', 'Valor Atualizado', '']
+        for i, t in enumerate(cabs_c, 1):
+            if t != '':
+                ws.cell(row=linha, column=i, value=t).font = f_negrito
+                ws.cell(row=linha, column=i).border = borda
+                ws.cell(row=linha, column=i).fill = fundo_cinza
+                ws.cell(row=linha, column=i).alignment = Alignment(horizontal="center", vertical="center")
+        linha += 1
+        for _, rc in df_custas_ac.iterrows():
+            ws.cell(row=linha, column=1, value=rc.get('ID / Folha', '')).border = borda
+            ws.cell(row=linha, column=2, value=rc.get('Descrição', 'Custa Processual')).border = borda
+            ws.cell(row=linha, column=3, value=rc['Data Desembolso'].strftime('%d/%m/%Y')).border = borda
+            ws.cell(row=linha, column=4, value=rc['Valor Histórico']).number_format = moeda; ws.cell(row=linha, column=4).border = borda
+            ws.cell(row=linha, column=5, value=rc.get('Fator CM', 1.0)).number_format = '0.0000000'; ws.cell(row=linha, column=5).border = borda
+            ws.cell(row=linha, column=6, value=rc.get('Exigível', 0.0)).number_format = moeda; ws.cell(row=linha, column=6).border = borda
+            linha += 1
+        linha += 1
+
+    ws.merge_cells(f'A{linha}:G{linha}'); ws[f'A{linha}'] = "RESUMO E ATUALIZAÇÃO DO SALDO DEVEDOR"
     ws[f'A{linha}'].font = f_titulo; ws[f'A{linha}'].fill = fundo_escuro; ws[f'A{linha}'].alignment = Alignment(horizontal="center"); linha += 1
 
     def add_total(desc, val, negrito=False, dest=False, formato=moeda):
-        nonlocal linha; ws.merge_cells(f'A{linha}:E{linha}')
+        nonlocal linha; ws.merge_cells(f'A{linha}:F{linha}')
         ws.cell(row=linha, column=1, value=desc).alignment = Alignment(horizontal="right")
-        ws.cell(row=linha, column=6, value=val).number_format = formato
+        ws.cell(row=linha, column=7, value=val).number_format = formato
         fonte = f_negrito if negrito else f_normal
-        ws.cell(row=linha, column=1).font = fonte; ws.cell(row=linha, column=6).font = fonte
-        if dest: ws.cell(row=linha, column=1).fill = fundo_cinza; ws.cell(row=linha, column=6).fill = fundo_cinza
-        for i in range(1, 7): ws.cell(row=linha, column=i).border = borda
+        ws.cell(row=linha, column=1).font = fonte; ws.cell(row=linha, column=7).font = fonte
+        if dest: ws.cell(row=linha, column=1).fill = fundo_cinza; ws.cell(row=linha, column=7).fill = fundo_cinza
+        for i in range(1, 8): ws.cell(row=linha, column=i).border = borda
         linha += 1
 
     add_total("Valor Original Confessado (Reversão de Desconto):", valor_confessado)
-    if total_pago > 0: add_total("(-) Soma das Parcelas Pagas:", total_pago)
-    add_total("(=) SALDO DEVEDOR BASE (Na data do Inadimplemento):", saldo_base, True, True)
+    if total_pago > 0: add_total("(-) Soma Nominal das Parcelas Pagas:", total_pago)
+    if not evolucao_cc:
+        add_total("(=) SALDO DEVEDOR BASE (Na data do Inadimplemento):", saldo_base, True, True)
+        add_total("Fator de Correção Monetária Acumulado:", f_cm, formato='0.0000000')
     linha += 1
-    
-    add_total("Fator de Correção Monetária Acumulado:", f_cm, formato='0.0000000')
-    add_total("Principal Corrigido:", val_princ)
-    add_total(f"Juros de Mora Pós-Quebra Acumulados:", f_jur, formato='0.00%')
-    add_total("Valor dos Juros:", val_juros)
-    add_total("SUBTOTAL ATUALIZADO:", subtotal, True, True)
+
+    add_total("Principal Remanescente Corrigido:", val_princ)
+    if not evolucao_cc:
+        add_total("Juros de Mora Pós-Quebra Acumulados:", f_jur, formato='0.00%')
+    add_total("Juros de Mora Acumulados (1% a.m.):", val_juros)
+    add_total("(=) SALDO REMANESCENTE ATUALIZADO (Principal + Juros):", subtotal, True, True)
     linha += 1
-    
-    if val_multa > 0: add_total(f"(+) Multa Moratória Contratual ({multa_perc*100:.0f}%):", val_multa)
-    if val_hon > 0: add_total(f"(+) Honorários de Execução/Retomada ({hon_perc*100:.0f}%):", val_hon)
+
+    if val_multa > 0: add_total(f"(+) Multa Moratória Contratual ({multa_perc*100:.0f}% sobre o saldo atualizado):", val_multa)
+    if val_hon > 0: add_total(f"(+) Honorários de Execução/Retomada ({hon_perc*100:.0f}% sobre o saldo atualizado):", val_hon)
+    if total_custas_ac > 0: add_total("(+) Custas e Despesas Pós-Acordo Atualizadas:", total_custas_ac)
     if multa_523 > 0: add_total("(+) Multa Art. 523 CPC (10%):", multa_523)
     if hon_523 > 0: add_total("(+) Honorários Art. 523 CPC (10%):", hon_523)
     add_total("TOTAL GERAL DEVIDO PELO DESCUMPRIMENTO:", total_geral, True, True)
     linha += 1
 
-    ws.column_dimensions['A'].width = 25; ws.column_dimensions['B'].width = 20
-    ws.column_dimensions['C'].width = 20; ws.column_dimensions['D'].width = 15
-    ws.column_dimensions['E'].width = 15; ws.column_dimensions['F'].width = 25
+    ws.column_dimensions['A'].width = 16; ws.column_dimensions['B'].width = 34
+    ws.column_dimensions['C'].width = 20; ws.column_dimensions['D'].width = 20
+    ws.column_dimensions['E'].width = 18; ws.column_dimensions['F'].width = 20
+    ws.column_dimensions['G'].width = 22
     
-    ws.print_area = f'A1:F{linha}'; ws.page_setup.fitToWidth = 1; ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
+    ws.print_area = f'A1:G{linha}'; ws.page_setup.fitToWidth = 1; ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE if evolucao_cc else ws.ORIENTATION_PORTRAIT
     
     nome_saida = str(arquivo_saida).replace('laudo ', 'Quebra_de_Acordo_')
     if not nome_saida.endswith('.xlsx'): nome_saida += '.xlsx'
