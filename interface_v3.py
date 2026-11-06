@@ -1313,7 +1313,7 @@ class NashDataEntryGUI:
             text="📊 Analytics - Visão Geral de Cálculos (Deduplicação Inteligente por Processo CNJ)",
             font=("Arial", 13, "bold"), fg="#1F3864"
         ).pack(side="left")
-        ttk.Button(frame_topo, text="🔄 Atualizar Relatório", command=self.carregar_dados_analytics).pack(side="right")
+        ttk.Button(frame_topo, text="📤 Enviar Resumo ao Telegram", command=self.enviar_resumo_telegram).pack(side="right", padx=10)
 
         self.frame_cards = tk.Frame(self.aba_dashboard_admin)
         self.frame_cards.pack(fill="x", pady=8)
@@ -1456,6 +1456,65 @@ class NashDataEntryGUI:
         self.lbl_total_honorarios.config(text=f"Honorários de Sucumbência a Receber\n{self._formatar_brl(total_honorarios)}")
         self.lbl_total_processos.config(text=f"Cálculos Realizados\n{total_calc}")
 
+    def enviar_resumo_telegram(self):
+        def _worker():
+            try:
+                import requests
+                import getpass
+                from datetime import datetime
+                          
+                import os, sys
+                
+                TOKEN = ""
+                CHAT_ID = ""
+                
+                pasta_base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+                caminho_env = os.path.join(pasta_base, ".env")
+                
+                if os.path.exists(caminho_env):
+                    with open(caminho_env, "r", encoding="utf-8") as f:
+                        for linha in f:
+                            if linha.startswith("TELEGRAM_TOKEN="):
+                                TOKEN = linha.split("=", 1)[1].strip()
+                            elif linha.startswith("TELEGRAM_CHAT_ID="):
+                                CHAT_ID = linha.split("=", 1)[1].strip()
+                                
+                if not TOKEN or not CHAT_ID:
+                    self.root.after(0, lambda: messagebox.showerror("Erro", "Chaves do Telegram não encontradas no .env!"))
+                    return
+                
+                # Monta a mensagem pegando os textos que já estão nos cartões do seu Dashboard
+                txt_processos = self.lbl_total_processos.cget("text").replace("\n", ": ")
+                txt_creditos = self.lbl_total_creditos.cget("text").replace("\n", ": ")
+                txt_custas = self.lbl_total_custas.cget("text").replace("\n", ": ")
+                txt_hon = self.lbl_total_honorarios.cget("text").replace("\n", ": ")
+                
+                texto_msg = (
+                    f"📊 *Resumo Gerencial - Nash System*\n"
+                    f"Operador: {getpass.getuser()}\n"
+                    f"Data: {datetime.now().strftime('%d/%m/%Y às %H:%M')}\n\n"
+                    f"🔹 {txt_processos}\n"
+                    f"💰 {txt_creditos}\n"
+                    f"💳 {txt_custas}\n"
+                    f"⚖️ {txt_hon}"
+                )
+
+                url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+                data = {'chat_id': CHAT_ID, 'text': texto_msg, 'parse_mode': 'Markdown'}
+                
+                resposta = requests.post(url, data=data)
+                
+                if resposta.status_code == 200:
+                    self.root.after(0, lambda: messagebox.showinfo("Sucesso", "Resumo gerencial enviado ao grupo com sucesso!"))
+                else:
+                    self.root.after(0, lambda: messagebox.showerror("Erro", f"Falha ao enviar. Código: {resposta.status_code}"))
+
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("Erro de Sistema", f"Ocorreu um erro:\n{str(e)}"))
+
+        self.root.after(0, lambda: messagebox.showinfo("Enviando...", "Disparando resumo para o grupo do Telegram..."))
+        import threading
+        threading.Thread(target=_worker, daemon=True).start()
 
 if __name__ == "__main__":
     root = tk.Tk()
