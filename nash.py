@@ -10,7 +10,7 @@ import subprocess
 import re
 from pathlib import Path
 
-__version__ = "4.2.0"  # Conta corrente Art. 354 CC em Quebra de Acordo, Custas Pos-Acordo e Analytics v2
+__version__ = "4.3.0" 
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
