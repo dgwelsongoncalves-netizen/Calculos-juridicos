@@ -1044,12 +1044,13 @@ def executar_nash(caminho_entrada, arquivo_saida):
         gerar_relatorio_exito_cliente(processo, df_danos[df_danos['Risco Atual'] > 0], arquivo_saida)
 
     return {
-        "proporcao": proporcao_custas,
-        "nivel": nivel_alerta_custas,
-        "mensagem": msg_alerta_custas,
-        "total_creditos_atualizado": creditos_analytics,
-        "total_custas_atualizado": custas_analytics,
-        "total_honorarios_atualizado": honorarios_analytics
+        'proporcao': proporcao_custas,
+        'nivel': nivel_alerta_custas,
+        'mensagem': msg_alerta_custas,
+        'total_creditos_atualizado': creditos_analytics,
+        'total_custas_atualizado': custas_analytics,
+        'total_honorarios_atualizado': honorarios_analytics,
+        'valor_evitado_analytics': float(df_danos['Risco Atual'].sum()) if ('Risco Atual' in df_danos.columns and 'AUTOR' not in atuacao) else 0.0
     }
 
 # --- 6. GERAÇÃO DE RELATÓRIO ESTRATÉGICO INTERNO ---
