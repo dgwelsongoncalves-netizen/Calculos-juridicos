@@ -10,7 +10,7 @@ import subprocess
 import re
 from pathlib import Path
 
-__version__ = "4.3.0" 
+__version__ = "4.4.0" 
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
