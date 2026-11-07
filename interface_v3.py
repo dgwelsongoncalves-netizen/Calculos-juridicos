@@ -18,6 +18,7 @@ import getpass
 GITHUB_REPO = "dgwelsongoncalves-netizen/Calculos-juridicos"
 ARQUIVO_RASCUNHO = Path.home() / ".nash_rascunho_auto.xlsx"
 
+
 class NashDataEntryGUI:
     def aplicar_mascara_data(self, event):
         widget = event.widget
@@ -32,7 +33,7 @@ class NashDataEntryGUI:
 
         widget.delete(0, 'end')
         widget.insert(0, texto_formatado)
-    
+
     def __init__(self, root):
         self.root = root
         versao_atual = getattr(nash, "__version__", "4.3.0")
@@ -260,7 +261,7 @@ class NashDataEntryGUI:
 
         self._criar_campos_grade(frame_esq, campos_esquerda)
         self._criar_campos_grade(frame_dir, campos_direita)
-        
+
         self.vars_param["Justiça Gratuita"].trace_add("write", self._toggle_data_jg)
         self._toggle_data_jg()
 
@@ -431,7 +432,7 @@ class NashDataEntryGUI:
             tk.Label(f_inline, text=rot, font=("Arial", 8, "bold")).grid(row=0, column=idx, sticky="w", padx=4)
             w.grid(row=1, column=idx, sticky="ew", padx=4, pady=2)
             w.bind("<Return>", lambda e: self.adicionar_inline_custa())
-        
+
         btn_inc = tk.Button(
             f_inline, text="➕ Incluir [Enter]", bg="#16A34A", fg="white",
             font=("Arial", 8, "bold"), relief="flat", padx=10, pady=3,
@@ -468,9 +469,9 @@ class NashDataEntryGUI:
         if not data or not val:
             messagebox.showwarning("Campos Obrigatórios", "Preencha a Data e o Valor da custa processual.")
             return
-            
+
         desc_final = desc or "Custa Processual"
-            
+
         self.tree_custas.insert('', 'end', values=(
             self.in_custa_id.get().strip(), desc_final, data, val
         ))
@@ -686,12 +687,12 @@ class NashDataEntryGUI:
         if dt_concessao_str and jg_status == "Sim (Superveniente)":
             try:
                 dt_concessao = datetime.strptime(dt_concessao_str, "%d/%m/%Y")
-            except:
+            except Exception:
                 pass
 
         soma_custas_recuperaveis = 0.0
         soma_sunk_cost = 0.0
-        
+
         if hasattr(self, 'tree_custas'):
             for i in self.tree_custas.get_children():
                 vals = self.tree_custas.item(i, 'values')
@@ -699,7 +700,7 @@ class NashDataEntryGUI:
                     valor_c = self._parse_moeda_ui(vals[3])
                     desc_c = vals[1]
                     data_c_str = vals[2]
-                    
+
                     if jg_status == "Sim":
                         soma_sunk_cost += valor_c
                     elif "[SUNK]" in desc_c.upper():
@@ -711,7 +712,7 @@ class NashDataEntryGUI:
                                 soma_sunk_cost += valor_c
                             else:
                                 soma_custas_recuperaveis += valor_c
-                        except:
+                        except Exception:
                             soma_custas_recuperaveis += valor_c
                     else:
                         soma_custas_recuperaveis += valor_c
@@ -732,7 +733,7 @@ class NashDataEntryGUI:
             honorarios_estimados = round(base_liquida * (hon_pct / 100.0), 2)
             perc_hon_str = f"{hon_pct:g}%"
             base_hon_str = "QUEBRA DE ACORDO"
-            
+
         else:
             credito_principal = max(0.0, soma_danos - soma_ded)
             hon_fixo = self._parse_moeda_ui(self.vars_param.get("Honorários Fixos (R$)", tk.StringVar()).get())
@@ -860,20 +861,38 @@ class NashDataEntryGUI:
     def verificar_atualizacao_background(self, silencioso=True):
         def _worker():
             try:
-                url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-                req = urllib.request.Request(url, headers={"User-Agent": "NashSystem-Updater"})
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    dados = json.loads(resp.read().decode("utf-8"))
+                versao_local = getattr(nash, "__version__", "4.3.0")
+                tag_remota = ""
+                url_exe = None
+                url_html = f"https://github.com/{GITHUB_REPO}/releases"
 
-                tag_remota = dados.get("tag_name", "")
-                versao_local = getattr(nash, "__version__", "4.2.0")
-                if self._extrair_tupla_versao(tag_remota) > self._extrair_tupla_versao(versao_local):
-                    url_exe = None
-                    for asset in dados.get("assets", []):
-                        if str(asset.get("name", "")).lower().endswith(".exe"):
-                            url_exe = asset.get("browser_download_url")
-                            break
-                    url_html = dados.get("html_url", f"https://github.com/{GITHUB_REPO}/releases")
+                # 1. Lê diretamente a variável __version__ do nash.py na branch main do GitHub
+                url_raw = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/nash.py"
+                req_raw = urllib.request.Request(url_raw, headers={"User-Agent": "NashSystem-Updater"})
+                with urllib.request.urlopen(req_raw, timeout=10) as resp_raw:
+                    conteudo_nash = resp_raw.read().decode("utf-8", errors="ignore")
+                    match_ver = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', conteudo_nash)
+                    if match_ver:
+                        tag_remota = match_ver.group(1)
+
+                # 2. Busca no GitHub Releases o instalador .exe (se existir compilado pela Action)
+                try:
+                    url_api = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+                    req_api = urllib.request.Request(url_api, headers={"User-Agent": "NashSystem-Updater"})
+                    with urllib.request.urlopen(req_api, timeout=10) as resp_api:
+                        dados = json.loads(resp_api.read().decode("utf-8"))
+                        if not tag_remota:
+                            tag_remota = dados.get("tag_name", "")
+                        url_html = dados.get("html_url", url_html)
+                        for asset in dados.get("assets", []):
+                            if str(asset.get("name", "")).lower().endswith(".exe"):
+                                url_exe = asset.get("browser_download_url")
+                                break
+                except Exception:
+                    pass
+
+                # 3. Compara a versão do código na nuvem com a versão local instalada
+                if tag_remota and self._extrair_tupla_versao(tag_remota) > self._extrair_tupla_versao(versao_local):
                     self.root.after(0, lambda: self._oferecer_atualizacao(tag_remota, versao_local, url_exe, url_html))
                 elif not silencioso:
                     self.root.after(0, lambda: messagebox.showinfo(
@@ -1273,7 +1292,7 @@ class NashDataEntryGUI:
             total_s = m["soma_sunk"]
             total_d = m["credito_principal"]
             total_h = m["honorarios_estimados"]
-            
+
             atuacao = self.vars_param.get("Atuação", tk.StringVar()).get().strip().upper()
             valor_evitado = 0.0
 
@@ -1281,11 +1300,9 @@ class NashDataEntryGUI:
                 if resultado_motor.get("total_creditos_atualizado") is not None:
                     total_d = float(resultado_motor["total_creditos_atualizado"])
                 if resultado_motor.get("total_custas_atualizado") is not None:
-                    # O motor devolve o total da aba de custas. Temos de deduzir o sunk cost gerado pela interface
                     total_c = max(0.0, float(resultado_motor["total_custas_atualizado"]) - total_s)
                 if resultado_motor.get("total_honorarios_atualizado") is not None:
                     total_h = float(resultado_motor["total_honorarios_atualizado"])
-                # Puxa o êxito que inserimos no retorno do nash.py
                 if resultado_motor.get("valor_evitado_analytics") is not None:
                     valor_evitado = float(resultado_motor["valor_evitado_analytics"])
 
@@ -1406,7 +1423,7 @@ class NashDataEntryGUI:
             font=("Arial", 11, "bold"), bg="#EFF6FF", fg="#1D4ED8", padx=10, pady=10, relief="groove"
         )
         self.lbl_total_creditos.pack(side="left", expand=True, fill="both", padx=2)
-        
+
         self.lbl_total_custas = tk.Label(
             self.frame_cards, text="Custas (Recuperar)\nR$ 0,00",
             font=("Arial", 11, "bold"), bg="#EFF6FF", fg="#1D4ED8", padx=10, pady=10, relief="groove"
@@ -1520,7 +1537,7 @@ class NashDataEntryGUI:
             sunk_val = float(dados.get("total_sunk", 0.0) or 0.0)
             creditos_val = float(dados.get("total_creditos", 0.0) or 0.0)
             evitado_val = float(dados.get("valor_evitado", 0.0) or 0.0)
-            
+
             if "total_honorarios" in dados and dados.get("total_honorarios") is not None:
                 hon_val = float(dados.get("total_honorarios", 0.0) or 0.0)
             else:
@@ -1591,10 +1608,10 @@ class NashDataEntryGUI:
             try:
                 with open(caminho_arq, "r", encoding="utf-8") as f:
                     d = json.load(f)
-                
+
                 dt_arq = str(d.get("data_hora", "")).split(" ")[0]
                 pr_arq = str(d.get("processo", "")).strip() or "Sem número"
-                
+
                 if dt_arq == data_sel and pr_arq == proc_sel:
                     os.remove(caminho_arq)
             except Exception as e:
@@ -1607,17 +1624,13 @@ class NashDataEntryGUI:
         def _worker():
             try:
                 import requests
-                import getpass
-                from datetime import datetime
-                          
-                import os, sys
-                
+
                 TOKEN = ""
                 CHAT_ID = ""
-                
+
                 pasta_base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
                 caminho_env = os.path.join(pasta_base, ".env")
-                
+
                 if os.path.exists(caminho_env):
                     with open(caminho_env, "r", encoding="utf-8") as f:
                         for linha in f:
@@ -1625,18 +1638,18 @@ class NashDataEntryGUI:
                                 TOKEN = linha.split("=", 1)[1].strip()
                             elif linha.startswith("TELEGRAM_CHAT_ID="):
                                 CHAT_ID = linha.split("=", 1)[1].strip()
-                                
+
                 if not TOKEN or not CHAT_ID:
                     self.root.after(0, lambda: messagebox.showerror("Erro", "Chaves do Telegram não encontradas no .env!"))
                     return
-                
+
                 txt_processos = self.lbl_total_processos.cget("text").replace("\n", ": ")
                 txt_creditos = self.lbl_total_creditos.cget("text").replace("\n", ": ")
                 txt_evitado = self.lbl_total_evitado.cget("text").replace("\n", ": ")
                 txt_custas = self.lbl_total_custas.cget("text").replace("\n", ": ")
                 txt_sunk = self.lbl_total_sunk.cget("text").replace("\n", ": ")
                 txt_hon = self.lbl_total_honorarios.cget("text").replace("\n", ": ")
-                
+
                 texto_msg = (
                     f"📊 *Resumo Gerencial - Nash System*\n"
                     f"Operador: {getpass.getuser()}\n"
@@ -1651,9 +1664,9 @@ class NashDataEntryGUI:
 
                 url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
                 data = {'chat_id': CHAT_ID, 'text': texto_msg, 'parse_mode': 'Markdown'}
-                
+
                 resposta = requests.post(url, data=data)
-                
+
                 if resposta.status_code == 200:
                     self.root.after(0, lambda: messagebox.showinfo("Sucesso", "Resumo gerencial enviado ao grupo com sucesso!"))
                 else:
@@ -1663,7 +1676,6 @@ class NashDataEntryGUI:
                 self.root.after(0, lambda: messagebox.showerror("Erro de Sistema", f"Ocorreu um erro:\n{str(e)}"))
 
         self.root.after(0, lambda: messagebox.showinfo("Enviando...", "Disparando resumo para o grupo do Telegram..."))
-        import threading
         threading.Thread(target=_worker, daemon=True).start()
 
     def verificar_envio_semanal_zip(self):
@@ -1719,7 +1731,7 @@ class NashDataEntryGUI:
 
                 url = f"https://api.telegram.org/bot{TOKEN}/sendDocument"
                 legenda = f"📦 *Relatório Semanal (JSONs)*\n👤 Operador(a): `{usuario}`\n📅 Data: {hoje.strftime('%d/%m/%Y')}\n📄 Total de arquivos: {len(arquivos_json)}"
-                
+
                 with open(caminho_zip, "rb") as f_zip:
                     resp = requests.post(
                         url,
@@ -1735,8 +1747,8 @@ class NashDataEntryGUI:
             except Exception as e:
                 print(f"Aviso: Envio semanal silencioso não concluído: {e}")
 
-        import threading
         threading.Thread(target=_worker, daemon=True).start()
+
 
 if __name__ == "__main__":
     root = tk.Tk()
