@@ -10,7 +10,7 @@ import subprocess
 import re
 from pathlib import Path
 
-__version__ = "4.4.0" 
+__version__ = "4.5.0" 
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -668,6 +668,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
         raise EntradaInvalidaError(f"Aba 'Danos', linha {int(sem_data.index[0]) + 2} ('{sem_data.iloc[0]['Descrição']}'): há Valor Histórico mas a Data Desembolso está em branco.")
     
     df_custas = pd.read_excel(xls, sheet_name='Custas').dropna(subset=['Data Desembolso', 'Valor Histórico'], how='all')
+    df_custas = df_custas[~df_custas['Descrição'].astype(str).str.contains(r'\[SUNK\]', case=False, na=False)]
     df_custas['Valor Histórico'] = pd.Series([limpar_moeda_estrito(x, f"Aba 'Custas', linha {int(i)+2}, 'Valor Histórico'") for i, x in df_custas['Valor Histórico'].items()], index=df_custas.index, dtype=float)
     df_custas['Data Desembolso'] = converter_datas_estrito(df_custas['Data Desembolso'], 'Custas', 'Data Desembolso')
     custa_sem_data = df_custas[(df_custas['Valor Histórico'] != 0) & (df_custas['Data Desembolso'].isna())]

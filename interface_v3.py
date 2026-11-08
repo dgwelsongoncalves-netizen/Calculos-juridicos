@@ -417,14 +417,14 @@ class NashDataEntryGUI:
         f_inline.pack(fill="x", pady=(0, 8))
 
         self.in_custa_id = ttk.Entry(f_inline, width=22)
-        self.in_custa_desc = ttk.Entry(f_inline, width=36)
-        self.in_custa_data = ttk.Entry(f_inline, width=15, validate="key", validatecommand=self.vcmd_data)
+        self.in_custa_desc = ttk.Entry(f_inline, width=32)
+        self.in_custa_data = ttk.Entry(f_inline, width=12, validate="key", validatecommand=self.vcmd_data)
         self.in_custa_data.bind('<KeyRelease>', self.aplicar_mascara_data)
-        self.in_custa_val = ttk.Entry(f_inline, width=15)
+        self.in_custa_val = ttk.Entry(f_inline, width=12)
 
         campos_c = [
             ("ID / Evento PJe:", self.in_custa_id),
-            ("Descrição da Despesa (Ex: Desarquivamento):", self.in_custa_desc),
+            ("Descrição da Despesa:", self.in_custa_desc),
             ("Data Pagamento:", self.in_custa_data),
             ("Valor Pago (R$):", self.in_custa_val)
         ]
@@ -432,6 +432,16 @@ class NashDataEntryGUI:
             tk.Label(f_inline, text=rot, font=("Arial", 8, "bold")).grid(row=0, column=idx, sticky="w", padx=4)
             w.grid(row=1, column=idx, sticky="ew", padx=4, pady=2)
             w.bind("<Return>", lambda e: self.adicionar_inline_custa())
+
+        # BOTÃO SUNK COST AQUI
+        self.var_sunk_cost = tk.BooleanVar()
+        chk_sunk = tk.Checkbutton(
+            f_inline, 
+            text="Sunk Cost\n(ex: recurso improvido, custas apelante)", 
+            variable=self.var_sunk_cost, 
+            fg="#DC2626", font=("Arial", 8, "bold")
+        )
+        chk_sunk.grid(row=1, column=len(campos_c), padx=6, sticky="w")
 
         btn_inc = tk.Button(
             f_inline, text="➕ Incluir [Enter]", bg="#16A34A", fg="white",
@@ -471,14 +481,52 @@ class NashDataEntryGUI:
             return
 
         desc_final = desc or "Custa Processual"
+        
+        # AQUI A MAGIA: Adiciona a tag [SUNK] se o botão estiver marcado
+        if self.var_sunk_cost.get():
+            desc_final += " [SUNK]"
 
         self.tree_custas.insert('', 'end', values=(
             self.in_custa_id.get().strip(), desc_final, data, val
         ))
+        
+        # Limpa os campos e desmarca o botãozinho
         self.in_custa_id.delete(0, 'end')
         self.in_custa_desc.delete(0, 'end')
         self.in_custa_data.delete(0, 'end')
         self.in_custa_val.delete(0, 'end')
+        self.var_sunk_cost.set(False)
+        self.in_custa_id.focus_set()
+        self._ao_modificar_dados()
+
+    def adicionar_inline_custa(self):
+        desc = self.in_custa_desc.get().strip()
+        data = self.in_custa_data.get().strip()
+        val = self.in_custa_val.get().strip()
+        
+        if not data or not val:
+            messagebox.showwarning("Campos Obrigatórios", "Preencha a Data e o Valor da custa processual.")
+            return
+
+        desc_final = desc or "Custa Processual"
+        
+        # AQUI A MAGIA: O sistema lê o botãozinho e injeta a tag sozinho
+        if hasattr(self, 'var_sunk_cost') and self.var_sunk_cost.get():
+            desc_final += " [SUNK]"
+
+        self.tree_custas.insert('', 'end', values=(
+            self.in_custa_id.get().strip(), desc_final, data, val
+        ))
+        
+        # Limpa os campos e desmarca o botão automaticamente para a próxima custa
+        self.in_custa_id.delete(0, 'end')
+        self.in_custa_desc.delete(0, 'end')
+        self.in_custa_data.delete(0, 'end')
+        self.in_custa_val.delete(0, 'end')
+        
+        if hasattr(self, 'var_sunk_cost'):
+            self.var_sunk_cost.set(False)
+            
         self.in_custa_id.focus_set()
         self._ao_modificar_dados()
 
