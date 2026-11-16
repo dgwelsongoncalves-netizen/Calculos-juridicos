@@ -10,7 +10,7 @@ import subprocess
 import re
 from pathlib import Path
 
-__version__ = "4.5.0" 
+__version__ = "4.6.0" 
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -420,6 +420,8 @@ def executar_nash(caminho_entrada, arquivo_saida):
         valor_confessado = limpar_moeda(get_param('Valor Original Confessado (Sem Desconto)', 0.0, df_orig=df_acordo))
         multa_perc = parse_percent(get_param('Multa Moratória Contratual (%)', 20, df_orig=df_acordo))
         hon_perc = parse_percent(get_param('Honorários de Retomada/Execução (%)', 20, df_orig=df_acordo))
+        base_multa_param = str(get_param('Base da Multa Contratual', '1. Sobre o Saldo Atualizado', df_orig=df_acordo))
+        base_hon_param = str(get_param('Base dos Honorários', '1. Sobre o Saldo Atualizado', df_orig=df_acordo))
         prop_custas_ac = parse_percent(get_param('Proporção Custas (%)', 100))
 
         houve_inadimplemento = str(get_param('Pagamento Voluntário 15d', '')).strip().upper() in ['NÃO', 'NAO', 'PARCIAL']
@@ -591,8 +593,19 @@ def executar_nash(caminho_entrada, arquivo_saida):
             subtotal_atualizado = round(saldo_atualizado_princ + saldo_atualizado_juros, 2)
 
         # Multa e Honorários Contratuais calculados sobre o saldo atualizado (sem efeito cascata de um sobre o outro)
-        valor_multa = round(subtotal_atualizado * multa_perc, 2)
-        valor_hon = round(subtotal_atualizado * hon_perc, 2)
+        if str(base_multa_param).startswith("2"):
+            valor_multa = round(valor_confessado * multa_perc, 2)
+            texto_multa = f"(+) Multa Moratória Contratual ({multa_perc*100:g}% sobre o valor original confessado):"
+        else:
+            valor_multa = round(subtotal_atualizado * multa_perc, 2)
+            texto_multa = f"(+) Multa Moratória Contratual ({multa_perc*100:g}% sobre o saldo atualizado):"
+
+        if str(base_hon_param).startswith("2"):
+            valor_hon = round(valor_confessado * hon_perc, 2)
+            texto_hon = f"(+) Honorários de Execução/Retomada ({hon_perc*100:g}% sobre o valor original confessado):"
+        else:
+            valor_hon = round(subtotal_atualizado * hon_perc, 2)
+            texto_hon = f"(+) Honorários de Execução/Retomada ({hon_perc*100:g}% sobre o saldo atualizado):"
 
         total_acordo_quebrado = round(subtotal_atualizado + valor_multa + valor_hon + total_custas_ac, 2)
 
@@ -607,7 +620,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
             multa_perc, valor_multa, hon_perc, valor_hon, multa_523, hon_523, total_geral,
             df_pagas, arquivo_saida, data_acordo_orig=data_acordo_orig,
             modalidade_acordo=modalidade_acordo, evolucao_cc=evolucao_cc,
-            df_custas_ac=df_custas_ac, total_custas_ac=total_custas_ac
+            df_custas_ac=df_custas_ac, total_custas_ac=total_custas_ac, texto_multa=texto_multa, texto_hon=texto_hon
         )
         return {
             "proporcao": 0.0,
@@ -1135,7 +1148,7 @@ def gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao, nivel,
     logging.info(f"Relatório estratégico gerado: {path_final.name}")
 
 # --- 7. GERAÇÃO DE ARQUIVOS PRINCIPAIS ---
-def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_pago, saldo_base, f_cm, f_jur, val_princ, val_juros, subtotal, multa_perc, val_multa, hon_perc, val_hon, multa_523, hon_523, total_geral, df_pagas, arquivo_saida, data_acordo_orig=None, modalidade_acordo="", evolucao_cc=None, df_custas_ac=None, total_custas_ac=0.0):
+def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_pago, saldo_base, f_cm, f_jur, val_princ, val_juros, subtotal, multa_perc, val_multa, hon_perc, val_hon, multa_523, hon_523, total_geral, df_pagas, arquivo_saida, data_acordo_orig=None, modalidade_acordo="", evolucao_cc=None, df_custas_ac=None, total_custas_ac=0.0, texto_multa="(+) Multa Moratória Contratual:", texto_hon="(+) Honorários de Execução/Retomada:"):
     wb = Workbook()
     ws = wb.active
     ws.title = "Quebra de Acordo"
@@ -1247,8 +1260,8 @@ def gerar_laudo_acordo(processo, data_inad, regra_pos, valor_confessado, total_p
     add_total("(=) SALDO REMANESCENTE ATUALIZADO (Principal + Juros):", subtotal, True, True)
     linha += 1
 
-    if val_multa > 0: add_total(f"(+) Multa Moratória Contratual ({multa_perc*100:.0f}% sobre o saldo atualizado):", val_multa)
-    if val_hon > 0: add_total(f"(+) Honorários de Execução/Retomada ({hon_perc*100:.0f}% sobre o saldo atualizado):", val_hon)
+    if val_multa > 0: add_total(texto_multa, val_multa)
+    if val_hon > 0: add_total(texto_hon, val_hon)
     if total_custas_ac > 0: add_total("(+) Custas e Despesas Pós-Acordo Atualizadas:", total_custas_ac)
     if multa_523 > 0: add_total("(+) Multa Art. 523 CPC (10%):", multa_523)
     if hon_523 > 0: add_total("(+) Honorários Art. 523 CPC (10%):", hon_523)

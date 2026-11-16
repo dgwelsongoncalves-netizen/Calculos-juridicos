@@ -615,6 +615,8 @@ class NashDataEntryGUI:
 
         campos_acordo = [
             ("Regra de Atualização Pós-Quebra", "Combo", self.opcoes_regras),
+            ("Base da Multa Contratual", "Combo", ["1. Sobre o Saldo Atualizado (Padrão)", "2. Sobre o Valor Original Confessado"]),
+            ("Base dos Honorários", "Combo", ["1. Sobre o Saldo Atualizado (Padrão)", "2. Sobre o Valor Original Confessado"]),
             ("Data do Acordo Original", "Entry", ""),
             ("Data do Inadimplemento", "Entry", ""),
             ("Valor Original Confessado (Sem Desconto)", "Entry", ""),
@@ -768,6 +770,8 @@ class NashDataEntryGUI:
         modo = self.modo_calculo.get()
         if modo == "QUEBRA_ACORDO":
             modalidade_venc = self.vars_acordo.get("Modalidade de Vencimento", tk.StringVar()).get()
+            base_multa_UI = self.vars_acordo.get("Base da Multa Contratual", tk.StringVar()).get()
+            base_hon_UI = self.vars_acordo.get("Base dos Honorários", tk.StringVar()).get()
             val_conf = self._parse_moeda_ui(self.vars_acordo.get("Valor Original Confessado (Sem Desconto)", tk.StringVar()).get())
             multa_pct = self._parse_moeda_ui(self.vars_acordo.get("Multa Moratória Contratual (%)", tk.StringVar()).get())
             hon_pct = self._parse_moeda_ui(self.vars_acordo.get("Honorários de Retomada/Execução (%)", tk.StringVar()).get())
@@ -777,11 +781,21 @@ class NashDataEntryGUI:
             else:
                 base_liquida = max(0.0, val_conf - soma_pagas_acordo) if val_conf > 0 else soma_danos
 
-            credito_principal = round(base_liquida * (1.0 + (multa_pct / 100.0)), 2)
-            honorarios_estimados = round(base_liquida * (hon_pct / 100.0), 2)
+            # Lógica flexível da multa
+            if base_multa_UI and base_multa_UI.startswith("2"):
+                valor_multa = round(val_conf * (multa_pct / 100.0), 2)
+            else:
+                valor_multa = round(base_liquida * (multa_pct / 100.0), 2)
+
+            # Lógica flexível dos honorários
+            if base_hon_UI and base_hon_UI.startswith("2"):
+                honorarios_estimados = round(val_conf * (hon_pct / 100.0), 2)
+            else:
+                honorarios_estimados = round(base_liquida * (hon_pct / 100.0), 2)
+
+            credito_principal = round(base_liquida + valor_multa, 2)
             perc_hon_str = f"{hon_pct:g}%"
             base_hon_str = "QUEBRA DE ACORDO"
-
         else:
             credito_principal = max(0.0, soma_danos - soma_ded)
             hon_fixo = self._parse_moeda_ui(self.vars_param.get("Honorários Fixos (R$)", tk.StringVar()).get())
