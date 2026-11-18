@@ -27,6 +27,11 @@ jobs:
           pip install pyinstaller
           pip install -r requirements.txt
 
+      - name: 🛡️ Auditoria de Segurança nas Bibliotecas (Supply Chain)
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt --desc on
+
       - name: Validar sintaxe do Python antes de compilar
         run: |
           python -m py_compile nash.py interface_v3.py
