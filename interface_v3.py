@@ -189,12 +189,53 @@ class NashDataEntryGUI:
         self.criar_aba_dashboard_restrita()
 
     def montar_aba_parametros(self):
+        # Container com rolagem vertical para evitar cortes em telas menores ou com escala > 100%
+        canvas = tk.Canvas(self.tab_parametros, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.tab_parametros, orient="vertical", command=canvas.yview)
+        container = ttk.Frame(canvas)
+
+        canvas_window = canvas.create_window((0, 0), window=container, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        def _ajustar_scrollregion(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _ajustar_largura(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+
+        container.bind("<Configure>", _ajustar_scrollregion)
+        canvas.bind("<Configure>", _ajustar_largura)
+
+        def _on_mousewheel(event):
+            if event.num == 4:      # Linux scroll up
+                canvas.yview_scroll(-1, "units")
+            elif event.num == 5:    # Linux scroll down
+                canvas.yview_scroll(1, "units")
+            else:                   # Windows / macOS
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _bind_wheel(event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            canvas.bind_all("<Button-4>", _on_mousewheel)
+            canvas.bind_all("<Button-5>", _on_mousewheel)
+
+        def _unbind_wheel(event):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        canvas.bind("<Enter>", _bind_wheel)
+        canvas.bind("<Leave>", _unbind_wheel)
+
         frame_modo = tk.LabelFrame(
-            self.tab_parametros,
+            container,
             text=" PASSO 1 — Qual é a natureza deste cálculo? (Configura e bloqueia campos desnecessários automaticamente) ",
-            font=("Arial", 9, "bold"), fg="#1F3864", padx=10, pady=8
+            font=("Arial", 9, "bold"), fg="#1F3864", padx=10, pady=4
         )
-        frame_modo.pack(fill="x", pady=(0, 10))
+        frame_modo.pack(fill="x", pady=(0, 6))
 
         modos = [
             ("SENTENCA", "1. Cumprimento de Sentença (Condenação Judicial)", "Calcula Danos, Custas, Honorários Sucumbenciais e Multa Art. 523."),
@@ -203,7 +244,7 @@ class NashDataEntryGUI:
         ]
 
         for idx, (val_modo, titulo, subtitulo) in enumerate(modos):
-            f_card = tk.Frame(frame_modo, bd=1, relief="groove", padx=8, pady=4)
+            f_card = tk.Frame(frame_modo, bd=1, relief="groove", padx=8, pady=3)
             f_card.grid(row=0, column=idx, sticky="nsew", padx=5)
             frame_modo.columnconfigure(idx, weight=1)
 
@@ -214,20 +255,20 @@ class NashDataEntryGUI:
             rb.pack(anchor="w")
             tk.Label(f_card, text=subtitulo, fg="#475569", font=("Arial", 8), justify="left", wraplength=280).pack(anchor="w", pady=(2, 0))
 
-        frame_cols = ttk.Frame(self.tab_parametros)
+        frame_cols = ttk.Frame(container)
         frame_cols.pack(fill="both", expand=True)
         frame_cols.columnconfigure(0, weight=1)
         frame_cols.columnconfigure(1, weight=1)
 
         frame_esq = tk.LabelFrame(
             frame_cols, text=" PASSO 2 — Identificação e Datas do Processo ",
-            font=("Arial", 9, "bold"), fg="#1F3864", padx=10, pady=8
+            font=("Arial", 9, "bold"), fg="#1F3864", padx=10, pady=6
         )
         frame_esq.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
 
         frame_dir = tk.LabelFrame(
             frame_cols, text=" PASSO 3 — Honorários, Custas e Cumprimento (Art. 523) ",
-            font=("Arial", 9, "bold"), fg="#1F3864", padx=10, pady=8
+            font=("Arial", 9, "bold"), fg="#1F3864", padx=10, pady=6
         )
         frame_dir.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
 
@@ -270,7 +311,7 @@ class NashDataEntryGUI:
             text="💡 Dica: Em 'Desembolso', o Nash usa a data de cada item lançado na Aba 2 (ideal para Notas Fiscais ou Parcelas Vencidas).",
             fg="#1D4ED8", font=("Arial", 8, "italic"), wraplength=430, justify="left"
         )
-        lbl_dica.grid(row=len(campos_esquerda), column=0, columnspan=2, sticky="w", pady=(8, 0))
+        lbl_dica.grid(row=len(campos_esquerda), column=0, columnspan=2, sticky="w", pady=(6, 0))
 
     def _toggle_data_jg(self, *args):
         jg_val = self.vars_param.get("Justiça Gratuita", tk.StringVar()).get()
