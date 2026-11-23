@@ -1085,6 +1085,9 @@ class NashDataEntryGUI:
         elif proporcao >= 0.50:
             cor_custas = "#FFD700"
             texto_status = "🟡 ATENÇÃO: RISCO FINANCEIRO"
+        elif jg_ativa and total_custas > 0:
+            cor_custas = "#FFD700"
+            texto_status = "🟡 ATENÇÃO: SUNK COST (JUSTIÇA GRATUITA)"
         else:
             cor_custas = "#4CAF50"
             texto_status = "🟢 OPERAÇÃO SAUDÁVEL"

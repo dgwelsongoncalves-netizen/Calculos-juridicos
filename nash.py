@@ -10,7 +10,7 @@ import subprocess
 import re
 from pathlib import Path
 
-__version__ = "4.6.2" 
+__version__ = "4.6.3" 
 
 # --- VARIÁVEIS GLOBAIS PARA LAZY LOADING ---
 pd = None
@@ -348,7 +348,7 @@ def parse_percent(val):
     except: return 1.0
 
 # --- MÓDULO ANALÍTICO (VIABILIDADE FINANCEIRA) ---
-def analisar_viabilidade_financeira(df_danos, df_custas):
+def analisar_viabilidade_financeira(df_danos, df_custas, jg_adversa=False):
     if df_danos.empty or df_custas.empty:
         return 0.0, "NORMAL", ""
         
@@ -368,6 +368,9 @@ def analisar_viabilidade_financeira(df_danos, df_custas):
     elif proporcao >= 0.50:
         nivel = "ALERTA"
         msg = f"Risco Financeiro: Custas históricas (R$ {total_custas:,.2f}) representam {proporcao*100:.2f}% do pedido inicial."
+    elif jg_adversa and total_custas > 0:
+        nivel = "ALERTA"
+        msg = f"Atenção (Justiça Gratuita): Custas históricas de R$ {total_custas:,.2f} ({proporcao*100:.2f}% do pedido) são Sunk Cost (irrecuperáveis)."
     else:
         nivel = "NORMAL"
         msg = ""
@@ -692,7 +695,7 @@ def executar_nash(caminho_entrada, arquivo_saida):
     df_custas['Fator CM'] = 1.0
     df_custas['Fator Juros'] = 0.0
 
-    proporcao_custas, nivel_alerta_custas, msg_alerta_custas = analisar_viabilidade_financeira(df_danos, df_custas)
+    proporcao_custas, nivel_alerta_custas, msg_alerta_custas = analisar_viabilidade_financeira(df_danos, df_custas, jg_adversa)
     if nivel_alerta_custas in ["ALERTA", "CRITICO"]:
         gerar_relatorio_viabilidade(processo, atuacao, jg_adversa, proporcao_custas, nivel_alerta_custas, df_danos, df_custas, arquivo_saida)
     
